@@ -1,24 +1,21 @@
 {
   "environments": {
     "dev": {
-      "branch": "dev",
-      "auto_deploy": true,
       "require_pr_approval": false,
       "require_terraform_approval": false,
+      "auto_deploy": true,
       "promotion_target": "staging"
     },
     "staging": {
-      "branch": "staging",
-      "auto_deploy": true,
       "require_pr_approval": true,
       "require_terraform_approval": false,
+      "auto_deploy": true,
       "promotion_target": "production"
     },
-    "production": {
-      "branch": "production",
-      "auto_deploy": true,
+    "prod": {
       "require_pr_approval": true,
       "require_terraform_approval": true,
+      "auto_deploy": true,
       "promotion_target": null
     }
   }

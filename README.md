@@ -668,6 +668,190 @@ module "custom_monitoring" {
 - ✅ **Use workspaces** - Isolate state between environments
 - ✅ **Automate with GitOps** - Use GitHub Actions for deployments
 
+## 🔄 Pipeline and Deployment Guide
+
+### **Pipeline Triggers and Workflow**
+
+#### **Automatic Triggers:**
+- **Dev Branch Push**: Automatically runs setup → plan → apply
+- **Staging/Production Branch Push**: Automatically runs setup → plan → apply
+- **Pull Requests to Staging/Production**: Runs plan-only for review
+
+#### **Manual Triggers:**
+You can manually trigger the pipeline from any branch:
+1. Go to **GitHub Actions** → **"Terraform Infrastructure Deploy"** → **"Run workflow"**
+2. Select options:
+   - **Branch**: Choose your branch (dev, staging, production)
+   - **Environment**: Choose target environment (dev, staging, production)
+   - **Action**: Choose pipeline action:
+     - `setup-only`: Just create S3 buckets and DynamoDB tables
+     - `plan-only`: Plan without applying changes
+     - `plan-and-apply`: Full deployment pipeline
+     - `destroy`: Destroy infrastructure
+   - **Skip setup**: Check if backends already exist
+
+### **Environment Protection and Approvals**
+
+#### **Current Configuration:**
+- **Dev Environment**: ✅ No approval required, auto-deploys
+- **Staging Environment**: ⚠️ **Requires GitHub Environment Protection Setup**
+- **Production Environment**: ⚠️ **Requires GitHub Environment Protection Setup**
+
+#### **Setting Up Environment Protection and Approvers:**
+
+1. **Go to Repository Settings**:
+   ```
+   GitHub Repository → Settings → Environments
+   ```
+
+2. **Create Environment Protection Rules**:
+
+   **For Staging Environment:**
+   ```
+   Environment name: staging
+   ✅ Required reviewers: Add your team members
+   ✅ Wait timer: 0 minutes (or set delay)
+   ✅ Deployment branches: Only staging branch
+   ```
+
+   **For Production Environment:**
+   ```
+   Environment name: production
+   ✅ Required reviewers: Add senior team members/leads
+   ✅ Wait timer: 5 minutes (cooling period)
+   ✅ Deployment branches: Only production branch
+   ```
+
+   **For Production Apply Approval:**
+   ```
+   Environment name: production-apply-approval
+   ✅ Required reviewers: Add infrastructure team leads
+   ✅ Wait timer: 0 minutes
+   ✅ Deployment branches: Only production branch
+   ```
+
+3. **Add Reviewers**:
+   - Click **"Add required reviewers"**
+   - Add GitHub usernames or teams
+   - Minimum 1-2 reviewers recommended
+
+### **Creating PRs for Staging Environment**
+
+#### **Why No Automatic PR Creation:**
+Your current pipeline is configured for **direct branch deployment**, not PR-based workflow. Here are your options:
+
+#### **Option 1: Manual PR Creation (Current Setup)**
+```bash
+# After dev deployment succeeds, manually create PR
+git checkout staging
+git merge dev
+git push origin staging
+
+# Or create PR via GitHub UI
+# GitHub → Pull Requests → New → base: staging ← compare: dev
+```
+
+#### **Option 2: Enable GitOps Auto-Promotion**
+You have a `gitops-promotion.yml` workflow that can auto-create PRs. To enable it:
+
+1. **Check GitOps Configuration**:
+   ```bash
+   # Verify config/gitops-environments.json exists and is configured
+   cat config/gitops-environments.json
+   ```
+
+2. **Enable Auto-Promotion**:
+   The GitOps workflow should automatically create PRs from dev → staging → production when dev deployment succeeds.
+
+#### **Option 3: Switch to PR-Only Workflow**
+Modify the pipeline to only deploy via PRs:
+
+```yaml
+# In .github/workflows/terraform-deploy.yml
+on:
+  pull_request:
+    branches:
+      - dev        # Add this for dev PRs
+      - staging
+      - production
+  # Remove push triggers if you want PR-only workflow
+```
+
+### **Recommended Workflow for Your Team**
+
+#### **For Development:**
+```bash
+# 1. Work on feature branch
+git checkout -b feature/new-infrastructure
+# Make changes to main.tf and tfvars files
+git commit -m "feat: add new infrastructure"
+git push origin feature/new-infrastructure
+
+# 2. Create PR to dev branch
+# GitHub → Pull Requests → New → base: dev ← compare: feature/new-infrastructure
+
+# 3. After PR approval and merge, dev auto-deploys
+```
+
+#### **For Staging Deployment:**
+```bash
+# Option A: Manual PR (Current)
+git checkout staging
+git merge dev
+git push origin staging
+
+# Option B: GitHub UI PR
+# GitHub → Pull Requests → New → base: staging ← compare: dev
+# Add reviewers → Create PR → Approve → Merge
+# Pipeline auto-deploys to staging after merge
+```
+
+#### **For Production Deployment:**
+```bash
+# Create PR from staging to production
+git checkout production  
+git merge staging
+git push origin production
+
+# Or via GitHub UI with required approvals
+```
+
+### **Pipeline Status and Monitoring**
+
+#### **Check Pipeline Status:**
+```bash
+# View recent workflow runs
+GitHub → Actions → Select workflow → View runs
+
+# Check specific environment deployment
+GitHub → Actions → Filter by branch (dev/staging/production)
+```
+
+#### **Environment URLs:**
+After successful deployment, check the workflow summary for:
+- **ALB Endpoints**: Load balancer URLs
+- **EC2 Instance Details**: Instance IDs and IPs
+- **Terraform Outputs**: All resource details
+
+### **Troubleshooting Common Issues**
+
+#### **S3 Bucket Errors:**
+- ✅ **Fixed**: Pipeline now automatically creates S3 buckets
+- If still occurring: Run workflow with `setup-only` action first
+
+#### **Backend Configuration Issues:**
+- Check if `shared/backend-{env}.hcl` has placeholder values
+- Run setup stage to update backend configurations
+
+#### **Permission Issues:**
+- Verify AWS credentials in repository secrets
+- Check IAM roles have proper permissions
+- Ensure `OrganizationAccountAccessRole` exists in target accounts
+
+#### **Module Download Failures:**
+- Verify `PRIVATE_REPO_TOKEN` has access to module repositories
+- Check module repository URLs in main.tf
+
 ## 📚 Documentation
 
 - **[GitOps Setup Guide](docs/GITOPS_SETUP.md)** - Detailed setup instructions for GitOps workflow
