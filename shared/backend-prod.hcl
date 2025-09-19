@@ -3,7 +3,7 @@
 # This file gets automatically updated by setup-backend-per-account.sh script
 
 bucket         = "REPLACE_WITH_ACTUAL_BUCKET_NAME"
-key            = "environments/prod/terraform.tfstate"
+key            = "environments/production/terraform.tfstate"
 region         = "us-east-1"
 dynamodb_table = "REPLACE_WITH_ACTUAL_DYNAMODB_TABLE_NAME"
 encrypt        = true

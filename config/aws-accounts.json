@@ -6,5 +6,9 @@
   "staging": {
     "account_id": "137617557860",
     "role_name": "OrganizationAccountAccessRole"
+  },
+  "production": {
+    "account_id": "REPLACE_WITH_PRODUCTION_ACCOUNT_ID",
+    "role_name": "OrganizationAccountAccessRole"
   }
 }

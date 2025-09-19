@@ -374,6 +374,14 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
+      - name: Download backend artifacts
+        if: needs.setup-backends.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-backends
+          path: shared/
+        continue-on-error: true
+
       - name: Download plan artifacts
         uses: actions/download-artifact@v4
         with:
@@ -402,6 +410,28 @@ jobs:
           echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
           echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
           echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+
+      - name: Check backend configuration
+        run: |
+          BACKEND_FILE="shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl"
+          if [ ! -f "$BACKEND_FILE" ]; then
+            echo "❌ Backend configuration file not found: $BACKEND_FILE"
+            echo "Available backend files:"
+            ls -la shared/backend-*.hcl 2>/dev/null || echo "No backend files found"
+            exit 1
+          fi
+          
+          # Check if backend file has placeholder values
+          if grep -q "REPLACE_WITH_ACTUAL" "$BACKEND_FILE"; then
+            echo "❌ Backend configuration contains placeholder values"
+            echo "Content of $BACKEND_FILE:"
+            cat "$BACKEND_FILE"
+            echo "The setup stage needs to run first to replace these placeholders."
+            exit 1
+          fi
+          
+          echo "✅ Backend configuration looks good:"
+          cat "$BACKEND_FILE"
 
       - name: Terraform Init
         run: |
@@ -496,6 +526,14 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download backend artifacts
+        if: needs.setup-backends.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-backends
+          path: shared/
+        continue-on-error: true
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
