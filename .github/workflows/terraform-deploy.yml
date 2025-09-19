@@ -1,5 +1,4 @@
-# DISABLED - Using clean version
-# name: Terraform Infrastructure Deploy
+name: Terraform Infrastructure Deploy
 
 on:
   push:
