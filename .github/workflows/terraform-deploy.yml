@@ -662,81 +662,49 @@ jobs:
 
       - name: Create promotion PR
         if: steps.promotion.outputs.skip_promotion == 'false'
-        uses: peter-evans/create-pull-request@v5
-        with:
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
-          base: ${{ steps.promotion.outputs.target_env }}
-          head: ${{ steps.promotion.outputs.source_env }}
-          title: "🚀 Promote infrastructure: ${{ steps.promotion.outputs.source_env }} → ${{ steps.promotion.outputs.target_env }}"
-          body: |
-            ## 🚀 Infrastructure Promotion
-            
-            **Source Environment:** ${{ steps.promotion.outputs.source_env }}
-            **Target Environment:** ${{ steps.promotion.outputs.target_env }}
-            **Source Commit:** ${{ github.sha }}
-            **Workflow Run:** ${{ github.run_id }}
-            **Deployment Status:** ✅ ${{ steps.promotion.outputs.source_env }} deployment completed successfully
-            
-            ### 📋 What's Being Promoted
-            
-            This PR promotes infrastructure changes from ${{ steps.promotion.outputs.source_env }} to ${{ steps.promotion.outputs.target_env }}:
-            
-            ✅ **Infrastructure Code:**
-            - `main.tf` - Updated infrastructure definitions
-            - `variables.tf` - Variable definitions
-            - `outputs.tf` - Output definitions
-            - `userdata/` - Server initialization scripts
-            
-            ✅ **Configuration Files:**
-            - `tfvars/${{ steps.promotion.outputs.target_env }}-terraform.tfvars` - Environment-specific configuration
-            - Backend configurations
-            - AWS account mappings
-            
-            ### 🎯 Deployment Details
-            
-            **${{ steps.promotion.outputs.source_env }} Environment:**
-            - ✅ Backend setup completed
-            - ✅ Terraform plan successful
-            - ✅ Terraform apply completed
-            - ✅ Infrastructure deployed successfully
-            
-            **${{ steps.promotion.outputs.target_env }} Environment:**
-            - ⏳ Ready for deployment
-            - 🎛️ Will use `tfvars/${{ steps.promotion.outputs.target_env }}-terraform.tfvars`
-            - 🔒 Requires approval before deployment
-            
-            ### 🔍 Review Checklist
-            
-            - [ ] Infrastructure changes look correct
-            - [ ] `tfvars/${{ steps.promotion.outputs.target_env }}-terraform.tfvars` has appropriate values
-            - [ ] No sensitive data exposed
-            - [ ] Ready to deploy to ${{ steps.promotion.outputs.target_env }}
-            
-            ### 🚀 Next Steps
-            
-            1. **Review** all infrastructure changes
-            2. **Verify** environment-specific configurations
-            3. **Approve and merge** to trigger ${{ steps.promotion.outputs.target_env }} deployment
-            4. **Monitor** the deployment in GitHub Actions
-            
-            ### ⚙️ Deployment Configuration
-            
-            When merged, this will trigger:
-            ```
-            Environment: ${{ steps.promotion.outputs.target_env }}
-            Tfvars: tfvars/${{ steps.promotion.outputs.target_env }}-terraform.tfvars
-            Backend: shared/backend-${{ steps.promotion.outputs.target_env }}.hcl
-            ```
-            
-            ---
-            *This PR was created automatically after successful ${{ steps.promotion.outputs.source_env }} deployment.*
-            *Merge this PR to deploy the same infrastructure to ${{ steps.promotion.outputs.target_env }}.*
-          labels: |
-            promotion
-            ${{ steps.promotion.outputs.target_env }}
-            infrastructure
-            automated
-          draft: false
+        run: |
+          SOURCE_ENV="${{ steps.promotion.outputs.source_env }}"
+          TARGET_ENV="${{ steps.promotion.outputs.target_env }}"
+          
+          # Create PR body
+          PR_BODY="## 🚀 Infrastructure Promotion
+
+          **Source Environment:** $SOURCE_ENV
+          **Target Environment:** $TARGET_ENV
+          **Source Commit:** ${{ github.sha }}
+          **Workflow Run:** ${{ github.run_id }}
+          **Deployment Status:** ✅ $SOURCE_ENV deployment completed successfully
+
+          ### 📋 What's Being Promoted
+
+          This PR promotes infrastructure changes from $SOURCE_ENV to $TARGET_ENV.
+
+          ### 🚀 Next Steps
+
+          1. **Review** all infrastructure changes
+          2. **Approve and merge** to trigger $TARGET_ENV deployment
+
+          ---
+          *This PR was created automatically after successful $SOURCE_ENV deployment.*"
+          
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list --base $TARGET_ENV --head $SOURCE_ENV --json number --jq '.[0].number' 2>/dev/null || echo "")
+          
+          if [ -n "$EXISTING_PR" ]; then
+            echo "PR already exists: #$EXISTING_PR"
+            echo "Updating existing PR..."
+            echo "$PR_BODY" | gh pr edit $EXISTING_PR --title "🚀 Promote infrastructure: $SOURCE_ENV → $TARGET_ENV" --body-file -
+          else
+            echo "Creating new PR..."
+            echo "$PR_BODY" | gh pr create \
+              --base $TARGET_ENV \
+              --head $SOURCE_ENV \
+              --title "🚀 Promote infrastructure: $SOURCE_ENV → $TARGET_ENV" \
+              --body-file - \
+              --label "promotion,$TARGET_ENV,infrastructure,automated"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
 
       - name: Add promotion summary
         if: steps.promotion.outputs.skip_promotion == 'false'

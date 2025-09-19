@@ -1,0 +1,35 @@
+name: Test Manual Trigger
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - production
+      action:
+        description: 'Pipeline action'
+        required: true
+        default: 'plan-and-apply'
+        type: choice
+        options:
+        - setup-only
+        - plan-only
+        - plan-and-apply
+        - destroy
+
+jobs:
+  test:
+    name: Test Manual Workflow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test manual trigger
+        run: |
+          echo "Manual trigger works!"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Action: ${{ github.event.inputs.action }}"
