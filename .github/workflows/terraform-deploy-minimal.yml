@@ -1,0 +1,45 @@
+name: Terraform Infrastructure Deploy (Minimal)
+
+on:
+  push:
+    branches:
+      - dev
+      - staging
+      - production
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - production
+      action:
+        description: 'Pipeline action'
+        required: true
+        default: 'plan-and-apply'
+        type: choice
+        options:
+        - setup-only
+        - plan-only
+        - plan-and-apply
+        - destroy
+
+env:
+  TF_VERSION: "1.6.0"
+  AWS_DEFAULT_REGION: "us-east-1"
+
+jobs:
+  test:
+    name: Test Workflow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: |
+          echo "Workflow triggered!"
+          echo "Environment: ${{ github.event.inputs.environment || 'auto-detected' }}"
+          echo "Action: ${{ github.event.inputs.action || 'auto-detected' }}"
+          echo "Event: ${{ github.event_name }}"

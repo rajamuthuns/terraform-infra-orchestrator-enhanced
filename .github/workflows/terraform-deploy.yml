@@ -1,4 +1,5 @@
-name: Terraform Infrastructure Deploy
+# DISABLED - Using clean version
+# name: Terraform Infrastructure Deploy
 
 on:
   push:
@@ -659,6 +660,19 @@ jobs:
             echo "Promotion: $SOURCE_ENV → $TARGET_ENV"
             echo "skip_promotion=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Create repository labels
+        if: steps.promotion.outputs.skip_promotion == 'false'
+        run: |
+          # Create labels if they don't exist (ignore errors if they already exist)
+          gh label create "promotion" --description "Infrastructure promotion PR" --color "0052cc" || true
+          gh label create "infrastructure" --description "Infrastructure changes" --color "1d76db" || true
+          gh label create "automated" --description "Automated PR" --color "0e8a16" || true
+          gh label create "dev" --description "Development environment" --color "fbca04" || true
+          gh label create "staging" --description "Staging environment" --color "ff9500" || true
+          gh label create "production" --description "Production environment" --color "d73a49" || true
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
 
       - name: Create promotion PR
         if: steps.promotion.outputs.skip_promotion == 'false'
