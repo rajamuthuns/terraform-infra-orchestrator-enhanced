@@ -9,11 +9,6 @@ terraform {
       version = "~> 5.0"
     }
   }
-
-  backend "s3" {
-    # Backend configuration will be provided via backend config file
-    # This allows for workspace-aware state management
-  }
 }
 
 # Configure the AWS Provider
