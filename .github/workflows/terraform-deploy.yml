@@ -42,7 +42,6 @@ on:
         default: true
         type: boolean
 
-
 env:
   TF_VERSION: "1.6.0"
   AWS_DEFAULT_REGION: "us-east-1"
@@ -661,61 +660,26 @@ jobs:
             echo "skip_promotion=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create promotion branch
-        if: steps.promotion.outputs.skip_promotion == 'false'
-        run: |
-          SOURCE_ENV="${{ steps.promotion.outputs.source_env }}"
-          TARGET_ENV="${{ steps.promotion.outputs.target_env }}"
-          BRANCH_NAME="promote-${SOURCE_ENV}-to-${TARGET_ENV}-${{ github.run_number }}"
-          
-          echo "Creating promotion branch: $BRANCH_NAME"
-          
-          # Create promotion branch from target environment branch
-          git fetch origin
-          git checkout $TARGET_ENV || git checkout -b $TARGET_ENV origin/$TARGET_ENV || git checkout -b $TARGET_ENV
-          git checkout -b $BRANCH_NAME
-          
-          # Merge changes from source environment
-          git merge origin/$SOURCE_ENV --no-edit || {
-            echo "Merge conflict detected. Creating PR for manual resolution."
-            git merge --abort
-            git reset --hard $TARGET_ENV
-          }
-          
-          # Check if there are any changes to commit
-          if git diff --quiet $TARGET_ENV; then
-            echo "No changes to promote from $SOURCE_ENV to $TARGET_ENV"
-            echo "skip_pr=true" >> $GITHUB_ENV
-          else
-            # Push the branch
-            git push origin $BRANCH_NAME
-            
-            echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
-            echo "SOURCE_ENV=$SOURCE_ENV" >> $GITHUB_ENV
-            echo "TARGET_ENV=$TARGET_ENV" >> $GITHUB_ENV
-            echo "skip_pr=false" >> $GITHUB_ENV
-          fi
-
       - name: Create promotion PR
-        if: steps.promotion.outputs.skip_promotion == 'false' && env.skip_pr == 'false'
+        if: steps.promotion.outputs.skip_promotion == 'false'
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
-          branch: ${{ env.BRANCH_NAME }}
-          base: ${{ env.TARGET_ENV }}
-          title: "🚀 Promote infrastructure: ${{ env.SOURCE_ENV }} → ${{ env.TARGET_ENV }}"
+          base: ${{ steps.promotion.outputs.target_env }}
+          head: ${{ steps.promotion.outputs.source_env }}
+          title: "🚀 Promote infrastructure: ${{ steps.promotion.outputs.source_env }} → ${{ steps.promotion.outputs.target_env }}"
           body: |
             ## 🚀 Infrastructure Promotion
             
-            **Source Environment:** ${{ env.SOURCE_ENV }}
-            **Target Environment:** ${{ env.TARGET_ENV }}
+            **Source Environment:** ${{ steps.promotion.outputs.source_env }}
+            **Target Environment:** ${{ steps.promotion.outputs.target_env }}
             **Source Commit:** ${{ github.sha }}
             **Workflow Run:** ${{ github.run_id }}
-            **Deployment Status:** ✅ ${{ env.SOURCE_ENV }} deployment completed successfully
+            **Deployment Status:** ✅ ${{ steps.promotion.outputs.source_env }} deployment completed successfully
             
             ### 📋 What's Being Promoted
             
-            This PR promotes infrastructure changes from ${{ env.SOURCE_ENV }} to ${{ env.TARGET_ENV }}:
+            This PR promotes infrastructure changes from ${{ steps.promotion.outputs.source_env }} to ${{ steps.promotion.outputs.target_env }}:
             
             ✅ **Infrastructure Code:**
             - `main.tf` - Updated infrastructure definitions
@@ -724,52 +688,52 @@ jobs:
             - `userdata/` - Server initialization scripts
             
             ✅ **Configuration Files:**
-            - `tfvars/${{ env.TARGET_ENV }}-terraform.tfvars` - Environment-specific configuration
+            - `tfvars/${{ steps.promotion.outputs.target_env }}-terraform.tfvars` - Environment-specific configuration
             - Backend configurations
             - AWS account mappings
             
             ### 🎯 Deployment Details
             
-            **${{ env.SOURCE_ENV }} Environment:**
+            **${{ steps.promotion.outputs.source_env }} Environment:**
             - ✅ Backend setup completed
             - ✅ Terraform plan successful
             - ✅ Terraform apply completed
             - ✅ Infrastructure deployed successfully
             
-            **${{ env.TARGET_ENV }} Environment:**
+            **${{ steps.promotion.outputs.target_env }} Environment:**
             - ⏳ Ready for deployment
-            - 🎛️ Will use `tfvars/${{ env.TARGET_ENV }}-terraform.tfvars`
+            - 🎛️ Will use `tfvars/${{ steps.promotion.outputs.target_env }}-terraform.tfvars`
             - 🔒 Requires approval before deployment
             
             ### 🔍 Review Checklist
             
             - [ ] Infrastructure changes look correct
-            - [ ] `tfvars/${{ env.TARGET_ENV }}-terraform.tfvars` has appropriate values
+            - [ ] `tfvars/${{ steps.promotion.outputs.target_env }}-terraform.tfvars` has appropriate values
             - [ ] No sensitive data exposed
-            - [ ] Ready to deploy to ${{ env.TARGET_ENV }}
+            - [ ] Ready to deploy to ${{ steps.promotion.outputs.target_env }}
             
             ### 🚀 Next Steps
             
             1. **Review** all infrastructure changes
             2. **Verify** environment-specific configurations
-            3. **Approve and merge** to trigger ${{ env.TARGET_ENV }} deployment
+            3. **Approve and merge** to trigger ${{ steps.promotion.outputs.target_env }} deployment
             4. **Monitor** the deployment in GitHub Actions
             
             ### ⚙️ Deployment Configuration
             
             When merged, this will trigger:
             ```
-            Environment: ${{ env.TARGET_ENV }}
-            Tfvars: tfvars/${{ env.TARGET_ENV }}-terraform.tfvars
-            Backend: shared/backend-${{ env.TARGET_ENV }}.hcl
+            Environment: ${{ steps.promotion.outputs.target_env }}
+            Tfvars: tfvars/${{ steps.promotion.outputs.target_env }}-terraform.tfvars
+            Backend: shared/backend-${{ steps.promotion.outputs.target_env }}.hcl
             ```
             
             ---
-            *This PR was created automatically after successful ${{ env.SOURCE_ENV }} deployment.*
-            *Merge this PR to deploy the same infrastructure to ${{ env.TARGET_ENV }}.*
+            *This PR was created automatically after successful ${{ steps.promotion.outputs.source_env }} deployment.*
+            *Merge this PR to deploy the same infrastructure to ${{ steps.promotion.outputs.target_env }}.*
           labels: |
             promotion
-            ${{ env.TARGET_ENV }}
+            ${{ steps.promotion.outputs.target_env }}
             infrastructure
             automated
           draft: false
@@ -782,14 +746,8 @@ jobs:
           echo "**Source Environment:** ${{ steps.promotion.outputs.source_env }}" >> $GITHUB_STEP_SUMMARY
           echo "**Target Environment:** ${{ steps.promotion.outputs.target_env }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ env.skip_pr }}" == "true" ]; then
-            echo "ℹ️ **Status:** No changes to promote" >> $GITHUB_STEP_SUMMARY
-            echo "The ${{ steps.promotion.outputs.target_env }} environment already has the latest changes." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "✅ **Status:** Promotion PR created successfully" >> $GITHUB_STEP_SUMMARY
-            echo "📋 **Next Step:** Review and merge the PR to deploy to ${{ steps.promotion.outputs.target_env }}" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "✅ **Status:** Promotion PR created successfully" >> $GITHUB_STEP_SUMMARY
+          echo "📋 **Next Step:** Review and merge the PR to deploy to ${{ steps.promotion.outputs.target_env }}" >> $GITHUB_STEP_SUMMARY
 
       - name: No promotion needed
         if: steps.promotion.outputs.skip_promotion == 'true'
