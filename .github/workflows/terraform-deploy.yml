@@ -1,0 +1,418 @@
+name: Terraform Infrastructure Deploy
+
+on:
+  push:
+    branches:
+      - dev
+      - staging
+      - production
+  pull_request:
+    branches:
+      - staging
+      - production
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - production
+      action:
+        description: 'Pipeline action'
+        required: true
+        default: 'plan-and-apply'
+        type: choice
+        options:
+        - plan-only
+        - plan-and-apply
+        - destroy
+
+env:
+  TF_VERSION: "1.6.0"
+  AWS_DEFAULT_REGION: "us-east-1"
+
+jobs:
+  determine-environment:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      tfvars-file: ${{ steps.env.outputs.tfvars-file }}
+      needs-approval: ${{ steps.env.outputs.needs-approval }}
+    steps:
+      - name: Determine environment from branch or input
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+          else
+            case "${{ github.ref_name }}" in
+              "dev")
+                ENV="dev"
+                ;;
+              "staging")
+                ENV="staging"
+                ;;
+              "production")
+                ENV="production"
+                ;;
+              *)
+                ENV="dev"
+                ;;
+            esac
+          fi
+          
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          
+          # Set tfvars file based on environment
+          case "$ENV" in
+            "dev")
+              echo "tfvars-file=dev-terraform.tfvars" >> $GITHUB_OUTPUT
+              echo "needs-approval=false" >> $GITHUB_OUTPUT
+              ;;
+            "staging")
+              echo "tfvars-file=stg-terraform.tfvars" >> $GITHUB_OUTPUT
+              echo "needs-approval=true" >> $GITHUB_OUTPUT
+              ;;
+            "production")
+              echo "tfvars-file=prod-terraform.tfvars" >> $GITHUB_OUTPUT
+              echo "needs-approval=true" >> $GITHUB_OUTPUT
+              ;;
+          esac
+          
+          echo "Determined environment: $ENV"
+
+  terraform-plan:
+    name: Terraform Plan - ${{ needs.determine-environment.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [determine-environment]
+    outputs:
+      plan-success: ${{ steps.plan-result.outputs.success }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Configure Git Authentication
+        run: |
+          git config --global url."https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global credential.helper store
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          mkdir -p ~/.git
+          echo "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
+          echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Assume target account role
+        run: |
+          TARGET_ACCOUNT_ID=$(jq -r ".${{ needs.determine-environment.outputs.environment }}.account_id" config/aws-accounts.json)
+          if [ "$TARGET_ACCOUNT_ID" = "null" ] || [ -z "$TARGET_ACCOUNT_ID" ]; then
+            echo "Error: Account ID not found for environment ${{ needs.determine-environment.outputs.environment }}"
+            exit 1
+          fi
+          
+          TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          
+          TARGET_CREDENTIALS=$(aws sts assume-role \
+            --role-arn $TARGET_ROLE_ARN \
+            --role-session-name github-actions-${{ needs.determine-environment.outputs.environment }}-${{ github.run_id }} \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)
+          
+          echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: |
+          if [ ! -f shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl ]; then
+            echo "Error: Backend configuration file not found: shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl"
+            echo "Please run backend setup first."
+            exit 1
+          fi
+          
+          terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Terraform Workspace
+        run: |
+          terraform workspace select ${{ needs.determine-environment.outputs.environment }} || terraform workspace new ${{ needs.determine-environment.outputs.environment }}
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          if [ ! -f tfvars/${{ needs.determine-environment.outputs.tfvars-file }} ]; then
+            echo "Error: tfvars file not found: tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
+            exit 1
+          fi
+          
+          terraform plan -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }} -out=tfplan
+          
+          # Show plan summary
+          terraform show -no-color tfplan > plan-output.txt
+          echo "## Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tfvars File:** ${{ needs.determine-environment.outputs.tfvars-file }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Plan Output:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          head -50 plan-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload plan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ needs.determine-environment.outputs.environment }}
+          path: |
+            tfplan
+            plan-output.txt
+          retention-days: 7
+
+      - name: Set plan success output
+        id: plan-result
+        run: echo "success=true" >> $GITHUB_OUTPUT
+
+  terraform-apply:
+    name: Terraform Apply - ${{ needs.determine-environment.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [determine-environment, terraform-plan]
+    if: |
+      always() && 
+      needs.terraform-plan.outputs.plan-success == 'true' &&
+      (
+        (github.event.inputs.action == 'plan-and-apply') ||
+        (github.event_name == 'push' && github.ref_name == 'dev') ||
+        (github.event_name == 'push' && github.ref_name != 'dev')
+      ) &&
+      github.event.inputs.action != 'plan-only'
+    environment: 
+      name: ${{ needs.determine-environment.outputs.environment }}
+      url: ${{ steps.outputs.outputs.alb_url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Configure Git Authentication
+        run: |
+          git config --global url."https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global credential.helper store
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          mkdir -p ~/.git
+          echo "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
+          echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download plan artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ needs.determine-environment.outputs.environment }}
+          path: ./
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Assume target account role
+        run: |
+          TARGET_ACCOUNT_ID=$(jq -r ".${{ needs.determine-environment.outputs.environment }}.account_id" config/aws-accounts.json)
+          TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          
+          TARGET_CREDENTIALS=$(aws sts assume-role \
+            --role-arn $TARGET_ROLE_ARN \
+            --role-session-name github-actions-apply-${{ needs.determine-environment.outputs.environment }}-${{ github.run_id }} \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)
+          
+          echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: |
+          terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Terraform Workspace
+        run: |
+          terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+
+      - name: Terraform Apply
+        id: apply
+        run: |
+          if [ -f tfplan ]; then
+            echo "Using existing plan file..."
+            terraform apply -auto-approve tfplan
+          else
+            echo "No plan file found, running apply with tfvars..."
+            terraform apply -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
+          fi
+
+      - name: Get outputs
+        id: outputs
+        run: |
+          terraform output -json > outputs.json
+          
+          # Extract ALB URLs if available
+          ALB_ENDPOINTS=$(terraform output -json alb_endpoints 2>/dev/null || echo '{}')
+          if [ "$ALB_ENDPOINTS" != "{}" ]; then
+            FIRST_ALB_URL=$(echo $ALB_ENDPOINTS | jq -r 'to_entries | .[0].value // empty')
+            if [ -n "$FIRST_ALB_URL" ]; then
+              echo "alb_url=http://$FIRST_ALB_URL" >> $GITHUB_OUTPUT
+            fi
+          fi
+          
+          # Create deployment summary
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Workspace:** ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add ALB endpoints if available
+          if [ "$ALB_ENDPOINTS" != "{}" ]; then
+            echo "### 🌐 Load Balancer Endpoints:" >> $GITHUB_STEP_SUMMARY
+            echo $ALB_ENDPOINTS | jq -r 'to_entries[] | "- **\(.key)**: http://\(.value)"' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Add instance details if available
+          INSTANCES=$(terraform output -json instance_details 2>/dev/null || echo '{}')
+          if [ "$INSTANCES" != "{}" ]; then
+            echo "### 🖥️ EC2 Instances:" >> $GITHUB_STEP_SUMMARY
+            echo $INSTANCES | jq -r 'to_entries[] | "- **\(.key)**: \(.value.instance_id) (\(.value.private_ip))"' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ needs.determine-environment.outputs.environment }}
+          path: outputs.json
+          retention-days: 30
+
+  terraform-destroy:
+    name: Terraform Destroy - ${{ needs.determine-environment.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [determine-environment]
+    if: github.event.inputs.action == 'destroy'
+    environment: 
+      name: destroy-${{ needs.determine-environment.outputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Configure Git Authentication
+        run: |
+          git config --global url."https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global credential.helper store
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          mkdir -p ~/.git
+          echo "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Assume target account role
+        run: |
+          TARGET_ACCOUNT_ID=$(jq -r ".${{ needs.determine-environment.outputs.environment }}.account_id" config/aws-accounts.json)
+          TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          
+          TARGET_CREDENTIALS=$(aws sts assume-role \
+            --role-arn $TARGET_ROLE_ARN \
+            --role-session-name github-actions-destroy-${{ needs.determine-environment.outputs.environment }}-${{ github.run_id }} \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)
+          
+          echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: |
+          terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Terraform Workspace
+        run: |
+          terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+
+      - name: Terraform Destroy
+        run: |
+          terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
+
+  production-approval:
+    name: Production Terraform Apply Approval
+    runs-on: ubuntu-latest
+    needs: [determine-environment, terraform-plan]
+    if: |
+      always() && 
+      needs.determine-environment.outputs.environment == 'production' &&
+      needs.terraform-plan.outputs.plan-success == 'true' &&
+      github.event.inputs.action == 'plan-and-apply'
+    environment: 
+      name: production-apply-approval
+    steps:
+      - name: Production Apply Approval Required
+        run: |
+          echo "## 🔒 Production Apply Approval" >> $GITHUB_STEP_SUMMARY
+          echo "This step requires manual approval before applying changes to production." >> $GITHUB_STEP_SUMMARY
+          echo "Please review the terraform plan and approve if the changes are correct." >> $GITHUB_STEP_SUMMARY
+          echo "approved=true" >> $GITHUB_OUTPUT

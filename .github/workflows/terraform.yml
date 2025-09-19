@@ -1,0 +1,731 @@
+name: Terraform Infrastructure Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+      action:
+        description: 'Pipeline action'
+        required: true
+        default: 'full-pipeline'
+        type: choice
+        options:
+        - full-pipeline
+        - setup-only
+        - plan-only
+        - deploy-only
+        - destroy-only
+      skip_setup:
+        description: 'Skip setup stage (if backends already exist)'
+        required: false
+        default: false
+        type: boolean
+  # Allow manual triggers alongside GitOps workflow
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      action:
+        required: false
+        type: string
+        default: 'full-pipeline'
+
+env:
+  TF_VERSION: "1.6.0"
+  AWS_DEFAULT_REGION: "us-east-1"
+
+jobs:
+  setup-backends:
+    name: Setup Terraform Backends
+    runs-on: ubuntu-latest
+    if: |
+      (github.event.inputs.action == 'full-pipeline' && github.event.inputs.skip_setup == 'false') ||
+      github.event.inputs.action == 'setup-only'
+    outputs:
+      setup-success: ${{ steps.setup-result.outputs.success }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Configure Git Authentication
+        run: |
+          # Configure Git to use token for all GitHub operations
+          git config --global url."https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global credential.helper store
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          # Create and secure credentials file
+          mkdir -p ~/.git
+          echo "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          # Export Git environment variables for Terraform
+          echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
+          echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
+
+      - name: Verify Repository Access
+        run: |
+          echo "Testing access to ec2-base-module repository..."
+          if git ls-remote https://github.com/rajamuthuns/ec2-base-module.git HEAD > /dev/null 2>&1; then
+            echo "✅ Repository access successful"
+          else
+            echo "❌ Repository access failed"
+            echo "This will cause Terraform module download to fail"
+            exit 1
+          fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Validate AWS credentials
+        run: |
+          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] || [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            echo "Error: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be provided as secrets"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AWS_SESSION_TOKEN }}" ]; then
+            echo "Warning: AWS_SESSION_TOKEN not provided. If using temporary credentials, this will cause authentication failures."
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Setup backend configurations
+        id: setup-backend
+        run: |
+          chmod +x scripts/setup-backend-per-account.sh
+          # Get account ID for the target environment
+          TARGET_ACCOUNT_ID=$(jq -r ".${{ github.event.inputs.environment }}.account_id" config/aws-accounts.json)
+          if [ "$TARGET_ACCOUNT_ID" = "null" ] || [ -z "$TARGET_ACCOUNT_ID" ]; then
+            echo "Error: Account ID not found for environment ${{ github.event.inputs.environment }}"
+            exit 1
+          fi
+          echo "Setting up backend for environment: ${{ github.event.inputs.environment }} (Account: $TARGET_ACCOUNT_ID)"
+          bash scripts/setup-backend-per-account.sh "$TARGET_ACCOUNT_ID"
+          echo "Updated backend files:"
+          ls -la shared/backend-*.hcl
+          if [ -f shared/backend-${{ github.event.inputs.environment }}.hcl ]; then 
+            echo "Backend configuration for ${{ github.event.inputs.environment }}:"
+            cat shared/backend-${{ github.event.inputs.environment }}.hcl
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Upload backend artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-backends
+          path: shared/backend-*.hcl
+          retention-days: 7
+
+      - name: Set setup success output
+        id: setup-result
+        run: echo "success=true" >> $GITHUB_OUTPUT
+
+  terraform-plan:
+    name: Terraform Plan - ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [setup-backends]
+    if: |
+      always() && 
+      (
+        (github.event.inputs.action == 'full-pipeline') ||
+        (github.event.inputs.action == 'plan-only') ||
+        (github.event.inputs.action == 'deploy-only') ||
+        (github.event.inputs.action == 'destroy-only')
+      ) &&
+      (
+        (needs.setup-backends.result == 'success') ||
+        (needs.setup-backends.result == 'skipped' && github.event.inputs.skip_setup == 'true') ||
+        (github.event.inputs.action != 'full-pipeline')
+      )
+    outputs:
+      plan-success: ${{ steps.plan-result.outputs.success }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Configure Git Authentication
+        run: |
+          # Configure Git to use token for all GitHub operations
+          git config --global url."https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global credential.helper store
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          # Create and secure credentials file
+          mkdir -p ~/.git
+          echo "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          # Export Git environment variables for Terraform
+          echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
+          echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
+
+      - name: Verify Repository Access
+        run: |
+          echo "Testing access to ec2-base-module repository..."
+          if git ls-remote https://github.com/rajamuthuns/ec2-base-module.git HEAD > /dev/null 2>&1; then
+            echo "✅ Repository access successful"
+          else
+            echo "❌ Repository access failed"
+            echo "This will cause Terraform module download to fail"
+            echo "Please check:"
+            echo "1. PRIVATE_REPO_TOKEN is set correctly"
+            echo "2. Token has 'repo' or 'Contents: Read' permission"
+            echo "3. Token has access to rajamuthuns/ec2-base-module"
+            exit 1
+          fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download backend artifacts
+        if: needs.setup-backends.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-backends
+          path: shared/
+        continue-on-error: true
+
+      - name: Validate AWS credentials
+        run: |
+          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] || [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            echo "Error: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be provided as secrets"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AWS_SESSION_TOKEN }}" ]; then
+            echo "Warning: AWS_SESSION_TOKEN not provided. If using temporary credentials, this will cause authentication failures."
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Assume target account role
+        run: |
+          echo "Reading account configuration for environment: ${{ github.event.inputs.environment }}"
+          cat config/aws-accounts.json
+          TARGET_ACCOUNT_ID=$(jq -r ".${{ github.event.inputs.environment }}.account_id" config/aws-accounts.json)
+          if [ "$TARGET_ACCOUNT_ID" = "null" ] || [ -z "$TARGET_ACCOUNT_ID" ]; then
+            echo "Error: Account ID not found for environment ${{ github.event.inputs.environment }}"
+            exit 1
+          fi
+          echo "Target Account ID: $TARGET_ACCOUNT_ID"
+          TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          
+          TARGET_CREDENTIALS=$(aws sts assume-role \
+            --role-arn $TARGET_ROLE_ARN \
+            --role-session-name github-actions-${{ github.event.inputs.environment }}-${{ github.run_id }} \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)
+          
+          if [ $? -ne 0 ]; then
+            echo "Error: Failed to assume role $TARGET_ROLE_ARN"
+            exit 1
+          fi
+          
+          echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          if [ ! -f ../../shared/backend-${{ github.event.inputs.environment }}.hcl ]; then
+            echo "Error: Backend configuration file not found: shared/backend-${{ github.event.inputs.environment }}.hcl"
+            echo "Please run the 'setup-only' action first to create backend configurations."
+            exit 1
+          fi
+          
+          echo "Initializing Terraform with module download..."
+          terraform init -backend-config=../../shared/backend-${{ github.event.inputs.environment }}.hcl
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Terraform Workspace
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          terraform workspace select ${{ github.event.inputs.environment }} || terraform workspace new ${{ github.event.inputs.environment }}
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          if [ ! -f terraform.tfvars ]; then
+            echo "Error: terraform.tfvars file not found in environments/${{ github.event.inputs.environment }}"
+            exit 1
+          fi
+          terraform plan -var-file=terraform.tfvars -out=tfplan
+
+      - name: Upload plan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.event.inputs.environment }}
+          path: environments/${{ github.event.inputs.environment }}/tfplan
+          retention-days: 7
+
+      - name: Set plan success output
+        id: plan-result
+        run: echo "success=true" >> $GITHUB_OUTPUT
+
+  terraform-deploy:
+    name: Terraform Deploy - ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [setup-backends, terraform-plan]
+    if: |
+      always() && 
+      (
+        (github.event.inputs.action == 'full-pipeline' && needs.terraform-plan.outputs.plan-success == 'true') ||
+        (github.event.inputs.action == 'deploy-only' && needs.terraform-plan.outputs.plan-success == 'true')
+      )
+    environment: 
+      name: ${{ github.event.inputs.environment }}
+    outputs:
+      deploy-success: ${{ steps.deploy-result.outputs.success }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Configure Git Authentication
+        run: |
+          # Configure Git to use token for all GitHub operations
+          git config --global url."https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global credential.helper store
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          # Create and secure credentials file
+          mkdir -p ~/.git
+          echo "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          # Export Git environment variables for Terraform
+          echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
+          echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
+
+      - name: Verify Repository Access
+        run: |
+          echo "Testing access to ec2-base-module repository..."
+          if git ls-remote https://github.com/rajamuthuns/ec2-base-module.git HEAD > /dev/null 2>&1; then
+            echo "✅ Repository access successful"
+          else
+            echo "❌ Repository access failed"
+            echo "This will cause Terraform module download to fail"
+            exit 1
+          fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download plan artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ github.event.inputs.environment }}
+          path: environments/${{ github.event.inputs.environment }}/
+
+      - name: Validate AWS credentials
+        run: |
+          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] || [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            echo "Error: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be provided as secrets"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Assume target account role
+        run: |
+          TARGET_ACCOUNT_ID=$(jq -r ".${{ github.event.inputs.environment }}.account_id" config/aws-accounts.json)
+          TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          
+          TARGET_CREDENTIALS=$(aws sts assume-role \
+            --role-arn $TARGET_ROLE_ARN \
+            --role-session-name github-actions-deploy-${{ github.event.inputs.environment }}-${{ github.run_id }} \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)
+          
+          if [ $? -ne 0 ]; then
+            echo "Error: Failed to assume role $TARGET_ROLE_ARN"
+            exit 1
+          fi
+          
+          echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          if [ ! -f ../../shared/backend-${{ github.event.inputs.environment }}.hcl ]; then
+            echo "Error: Backend configuration file not found: shared/backend-${{ github.event.inputs.environment }}.hcl"
+            echo "Please run the 'setup-only' action first to create backend configurations."
+            exit 1
+          fi
+          terraform init -backend-config=../../shared/backend-${{ github.event.inputs.environment }}.hcl
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Terraform Workspace
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          terraform workspace select ${{ github.event.inputs.environment }} || terraform workspace new ${{ github.event.inputs.environment }}
+
+      - name: Terraform Apply
+        id: apply
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          if [ -f tfplan ]; then
+            echo "Using existing plan file..."
+            terraform apply -auto-approve tfplan
+          else
+            echo "No plan file found, running apply with tfvars..."
+            if [ ! -f terraform.tfvars ]; then
+              echo "Error: terraform.tfvars file not found in environments/${{ github.event.inputs.environment }}"
+              exit 1
+            fi
+            terraform apply -auto-approve -var-file=terraform.tfvars
+          fi
+
+      - name: Set deploy success output
+        id: deploy-result
+        run: echo "success=true" >> $GITHUB_OUTPUT
+
+  terraform-destroy:
+    name: Terraform Destroy - ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [setup-backends, terraform-plan]
+    if: |
+      always() && 
+      github.event.inputs.action == 'destroy-only' &&
+      (
+        (needs.setup-backends.result == 'success') ||
+        (needs.setup-backends.result == 'skipped')
+      )
+    environment: 
+      name: destroy-${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Configure Git Authentication
+        run: |
+          git config --global url."https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global credential.helper store
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          mkdir -p ~/.git
+          echo "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
+
+      - name: Verify Repository Access
+        run: |
+          echo "Testing access to ec2-base-module repository..."
+          if git ls-remote https://github.com/rajamuthuns/ec2-base-module.git HEAD > /dev/null 2>&1; then
+            echo "✅ Repository access successful"
+          else
+            echo "❌ Repository access failed"
+            echo "This will cause Terraform module download to fail"
+            exit 1
+          fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Validate AWS credentials
+        run: |
+          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] || [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            echo "Error: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be provided as secrets"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Assume target account role
+        run: |
+          TARGET_ACCOUNT_ID=$(jq -r ".${{ github.event.inputs.environment }}.account_id" config/aws-accounts.json)
+          TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          
+          TARGET_CREDENTIALS=$(aws sts assume-role \
+            --role-arn $TARGET_ROLE_ARN \
+            --role-session-name github-actions-destroy-${{ github.event.inputs.environment }}-${{ github.run_id }} \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)
+          
+          if [ $? -ne 0 ]; then
+            echo "Error: Failed to assume role $TARGET_ROLE_ARN"
+            exit 1
+          fi
+          
+          echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          if [ ! -f ../../shared/backend-${{ github.event.inputs.environment }}.hcl ]; then
+            echo "Error: Backend configuration file not found: shared/backend-${{ github.event.inputs.environment }}.hcl"
+            echo "Please run the 'setup-only' action first to create backend configurations."
+            exit 1
+          fi
+          terraform init -backend-config=../../shared/backend-${{ github.event.inputs.environment }}.hcl
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Terraform Workspace
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          terraform workspace select ${{ github.event.inputs.environment }}
+
+      - name: Terraform Destroy
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          if [ ! -f terraform.tfvars ]; then
+            echo "Error: terraform.tfvars file not found in environments/${{ github.event.inputs.environment }}"
+            exit 1
+          fi
+          terraform destroy -auto-approve -var-file=terraform.tfvars
+
+  cleanup-alb-logs:
+    name: Cleanup ALB Log Buckets
+    runs-on: ubuntu-latest
+    needs: [terraform-destroy]
+    if: |
+      always() && 
+      needs.terraform-destroy.result == 'failure' &&
+      github.event.inputs.action == 'destroy-only'
+    environment: 
+      name: cleanup-${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Configure Git Authentication
+        run: |
+          git config --global url."https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global credential.helper store
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          mkdir -p ~/.git
+          echo "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
+          echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Setup AWS CLI
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Assume target account role
+        run: |
+          TARGET_ACCOUNT_ID=$(jq -r ".${{ github.event.inputs.environment }}.account_id" config/aws-accounts.json)
+          TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          
+          TARGET_CREDENTIALS=$(aws sts assume-role \
+            --role-arn $TARGET_ROLE_ARN \
+            --role-session-name github-actions-cleanup-${{ github.event.inputs.environment }}-${{ github.run_id }} \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)
+          
+          echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+
+      - name: Clean up ALB access log buckets
+        run: |
+          echo "🧹 Cleaning up ALB access log buckets that may be preventing destroy..."
+          chmod +x scripts/cleanup-alb-logs.sh
+          bash scripts/cleanup-alb-logs.sh "${{ github.event.inputs.environment }}"
+
+      - name: Retry Terraform Destroy
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          echo "🔄 Retrying Terraform destroy after ALB log cleanup..."
+          
+          # Check if backend config exists
+          if [ ! -f ../../shared/backend-${{ github.event.inputs.environment }}.hcl ]; then
+            echo "❌ Backend configuration not found: shared/backend-${{ github.event.inputs.environment }}.hcl"
+            echo "Attempting to continue with local state..."
+          fi
+          
+          # Initialize Terraform
+          if [ -f ../../shared/backend-${{ github.event.inputs.environment }}.hcl ]; then
+            terraform init -backend-config=../../shared/backend-${{ github.event.inputs.environment }}.hcl
+          else
+            terraform init
+          fi
+          
+          # Select workspace
+          terraform workspace select ${{ github.event.inputs.environment }} || terraform workspace new ${{ github.event.inputs.environment }}
+          
+          # Retry destroy
+          terraform destroy -auto-approve -var-file=terraform.tfvars
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Force destroy remaining resources (if retry failed)
+        if: failure()
+        run: |
+          cd environments/${{ github.event.inputs.environment }}
+          echo "⚠️ Terraform destroy retry failed. Attempting force destroy..."
+          
+          # Try destroy with -refresh=false to skip state refresh
+          terraform destroy -auto-approve -var-file=terraform.tfvars -refresh=false || true
+          
+          # Try destroy with target to remove specific resources
+          echo "🎯 Attempting targeted destroy of common problematic resources..."
+          terraform destroy -auto-approve -var-file=terraform.tfvars -target=module.alb || true
+          terraform destroy -auto-approve -var-file=terraform.tfvars -target=module.ec2_instance || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        continue-on-error: true
+
+      - name: Cleanup summary
+        if: always()
+        run: |
+          echo "## 🧹 ALB Log Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason:** Terraform destroy failed due to non-empty S3 buckets" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Actions Taken:" >> $GITHUB_STEP_SUMMARY
+          echo "- 🧹 Cleaned up ALB access log buckets" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔄 Retried Terraform destroy" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" == "failure" ]; then
+            echo "- ⚠️ Attempted force destroy of remaining resources" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ⚠️ Manual Cleanup May Be Required" >> $GITHUB_STEP_SUMMARY
+            echo "Some resources may still exist in AWS. Please check the AWS Console and clean up manually if needed." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "ℹ️ **Note:** Terraform state and DynamoDB tables were preserved" >> $GITHUB_STEP_SUMMARY
+
+  pipeline-summary:
+    name: Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [setup-backends, terraform-plan, terraform-deploy, terraform-destroy, cleanup-alb-logs]
+    if: always()
+    steps:
+      - name: Pipeline Results
+        run: |
+          echo "## 🚀 Pipeline Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Action:** ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Stage Results:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Setup stage
+          if [[ "${{ needs.setup-backends.result }}" == "success" ]]; then
+            echo "✅ **Setup**: Completed successfully" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.setup-backends.result }}" == "skipped" ]]; then
+            echo "⏭️ **Setup**: Skipped" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.setup-backends.result }}" == "failure" ]]; then
+            echo "❌ **Setup**: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Plan stage
+          if [[ "${{ needs.terraform-plan.result }}" == "success" ]]; then
+            echo "✅ **Plan**: Completed successfully" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.terraform-plan.result }}" == "skipped" ]]; then
+            echo "⏭️ **Plan**: Skipped" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.terraform-plan.result }}" == "failure" ]]; then
+            echo "❌ **Plan**: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Deploy stage
+          if [[ "${{ needs.terraform-deploy.result }}" == "success" ]]; then
+            echo "✅ **Deploy**: Completed successfully" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.terraform-deploy.result }}" == "skipped" ]]; then
+            echo "⏭️ **Deploy**: Skipped" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.terraform-deploy.result }}" == "failure" ]]; then
+            echo "❌ **Deploy**: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Destroy stage
+          if [[ "${{ needs.terraform-destroy.result }}" == "success" ]]; then
+            echo "✅ **Destroy**: Completed successfully" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.terraform-destroy.result }}" == "skipped" ]]; then
+            echo "⏭️ **Destroy**: Skipped" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.terraform-destroy.result }}" == "failure" ]]; then
+            echo "❌ **Destroy**: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # ALB Log Cleanup stage
+          if [[ "${{ needs.cleanup-alb-logs.result }}" == "success" ]]; then
+            echo "🧹 **ALB Log Cleanup**: Completed successfully" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.cleanup-alb-logs.result }}" == "skipped" ]]; then
+            echo "⏭️ **ALB Log Cleanup**: Skipped" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.cleanup-alb-logs.result }}" == "failure" ]]; then
+            echo "❌ **ALB Log Cleanup**: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
