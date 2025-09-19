@@ -27,15 +27,110 @@ on:
         default: 'plan-and-apply'
         type: choice
         options:
+        - setup-only
         - plan-only
         - plan-and-apply
         - destroy
+      skip_setup:
+        description: 'Skip setup stage (if backends already exist)'
+        required: false
+        default: false
+        type: boolean
+
 
 env:
   TF_VERSION: "1.6.0"
   AWS_DEFAULT_REGION: "us-east-1"
 
 jobs:
+  setup-backends:
+    name: Setup Terraform Backends
+    runs-on: ubuntu-latest
+    if: |
+      github.event.inputs.action == 'setup-only' ||
+      (github.event.inputs.action == 'plan-and-apply' && github.event.inputs.skip_setup != 'true') ||
+      (github.event_name == 'push')
+    outputs:
+      setup-success: ${{ steps.setup-result.outputs.success }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Configure Git Authentication
+        run: |
+          git config --global url."https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global credential.helper store
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          mkdir -p ~/.git
+          echo "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
+          echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+      - name: Determine target environment
+        id: target-env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+          else
+            case "${{ github.ref_name }}" in
+              "dev") ENV="dev" ;;
+              "staging") ENV="staging" ;;
+              "production") ENV="production" ;;
+              *) ENV="dev" ;;
+            esac
+          fi
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "Target environment: $ENV"
+
+      - name: Setup backend configurations
+        id: setup-backend
+        run: |
+          chmod +x scripts/setup-backend-per-account.sh
+          TARGET_ENV="${{ steps.target-env.outputs.environment }}"
+          
+          # Get account ID for the target environment
+          TARGET_ACCOUNT_ID=$(jq -r ".${TARGET_ENV}.account_id" config/aws-accounts.json)
+          if [ "$TARGET_ACCOUNT_ID" = "null" ] || [ -z "$TARGET_ACCOUNT_ID" ]; then
+            echo "Error: Account ID not found for environment $TARGET_ENV"
+            exit 1
+          fi
+          echo "Setting up backend for environment: $TARGET_ENV (Account: $TARGET_ACCOUNT_ID)"
+          bash scripts/setup-backend-per-account.sh "$TARGET_ACCOUNT_ID"
+          echo "Updated backend files:"
+          ls -la shared/backend-*.hcl
+          if [ -f shared/backend-${TARGET_ENV}.hcl ]; then 
+            echo "Backend configuration for $TARGET_ENV:"
+            cat shared/backend-${TARGET_ENV}.hcl
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Upload backend artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-backends
+          path: shared/backend-*.hcl
+          retention-days: 7
+
+      - name: Set setup success output
+        id: setup-result
+        run: echo "success=true" >> $GITHUB_OUTPUT
+
   determine-environment:
     name: Determine Environment
     runs-on: ubuntu-latest
@@ -89,7 +184,19 @@ jobs:
   terraform-plan:
     name: Terraform Plan - ${{ needs.determine-environment.outputs.environment }}
     runs-on: ubuntu-latest
-    needs: [determine-environment]
+    needs: [setup-backends, determine-environment]
+    if: |
+      always() && 
+      (
+        (github.event.inputs.action == 'plan-and-apply') ||
+        (github.event.inputs.action == 'plan-only') ||
+        (github.event_name == 'push' && github.ref_name == 'dev')
+      ) &&
+      (
+        (needs.setup-backends.result == 'success') ||
+        (needs.setup-backends.result == 'skipped' && github.event.inputs.skip_setup == 'true') ||
+        (github.event_name == 'push')
+      )
     outputs:
       plan-success: ${{ steps.plan-result.outputs.success }}
     steps:
@@ -111,6 +218,14 @@ jobs:
           
           echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
           echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
+
+      - name: Download backend artifacts
+        if: needs.setup-backends.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-backends
+          path: shared/
+        continue-on-error: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -145,14 +260,31 @@ jobs:
           echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
           echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
 
-      - name: Terraform Init
+      - name: Check backend configuration
         run: |
-          if [ ! -f shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl ]; then
-            echo "Error: Backend configuration file not found: shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl"
-            echo "Please run backend setup first."
+          BACKEND_FILE="shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl"
+          if [ ! -f "$BACKEND_FILE" ]; then
+            echo "❌ Backend configuration file not found: $BACKEND_FILE"
+            echo "This usually means the setup stage was skipped or failed."
+            echo "Available backend files:"
+            ls -la shared/backend-*.hcl 2>/dev/null || echo "No backend files found"
             exit 1
           fi
           
+          # Check if backend file has placeholder values
+          if grep -q "REPLACE_WITH_ACTUAL" "$BACKEND_FILE"; then
+            echo "❌ Backend configuration contains placeholder values"
+            echo "Content of $BACKEND_FILE:"
+            cat "$BACKEND_FILE"
+            echo "The setup stage needs to run first to replace these placeholders."
+            exit 1
+          fi
+          
+          echo "✅ Backend configuration looks good:"
+          cat "$BACKEND_FILE"
+
+      - name: Terraform Init
+        run: |
           terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -199,7 +331,7 @@ jobs:
   terraform-apply:
     name: Terraform Apply - ${{ needs.determine-environment.outputs.environment }}
     runs-on: ubuntu-latest
-    needs: [determine-environment, terraform-plan]
+    needs: [setup-backends, determine-environment, terraform-plan]
     if: |
       always() && 
       needs.terraform-plan.outputs.plan-success == 'true' &&
@@ -332,7 +464,7 @@ jobs:
   terraform-destroy:
     name: Terraform Destroy - ${{ needs.determine-environment.outputs.environment }}
     runs-on: ubuntu-latest
-    needs: [determine-environment]
+    needs: [setup-backends, determine-environment]
     if: github.event.inputs.action == 'destroy'
     environment: 
       name: destroy-${{ needs.determine-environment.outputs.environment }}
