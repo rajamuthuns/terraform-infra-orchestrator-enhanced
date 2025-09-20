@@ -6,10 +6,6 @@ on:
       - dev
       - staging
       - production
-  pull_request:
-    branches:
-      - staging
-      - production
   workflow_dispatch:
     inputs:
       environment:
@@ -51,7 +47,8 @@ jobs:
     name: Setup Terraform Backends
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'setup-only' || (github.event.inputs.action == 'plan-and-apply' && github.event.inputs.skip_setup != 'true'))) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'setup-only') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan-and-apply' && github.event.inputs.skip_setup != 'true') ||
       (github.event_name == 'push')
     outputs:
       setup-success: ${{ steps.setup-result.outputs.success }}
@@ -108,13 +105,19 @@ jobs:
         run: |
           TARGET_ENV="${{ steps.target-env.outputs.environment }}"
           
+          echo "🔧 Starting backend setup for environment: $TARGET_ENV"
+          echo "📋 Event: ${{ github.event_name }}"
+          echo "📋 Action: ${{ github.event.inputs.action }}"
+          
           TARGET_ACCOUNT_ID=$(jq -r ".${TARGET_ENV}.account_id" config/aws-accounts.json)
           if [ "$TARGET_ACCOUNT_ID" = "null" ] || [ -z "$TARGET_ACCOUNT_ID" ]; then
-            echo "Error: Account ID not found for environment $TARGET_ENV"
+            echo "❌ Error: Account ID not found for environment $TARGET_ENV"
+            echo "Available accounts:"
+            cat config/aws-accounts.json
             exit 1
           fi
           
-          echo "Setting up backend for environment: $TARGET_ENV (Account: $TARGET_ACCOUNT_ID)"
+          echo "✅ Setting up backend for environment: $TARGET_ENV (Account: $TARGET_ACCOUNT_ID)"
           
           # Assume OrganizationAccountAccessRole for the target account
           ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
@@ -166,25 +169,25 @@ jobs:
           fi
           
           # Update backend configuration file
-          cat > "shared/backend-${TARGET_ENV}.hcl" << EOF
-          bucket         = "${BUCKET_NAME}"
-          key            = "environments/${TARGET_ENV}/terraform.tfstate"
-          region         = "us-east-1"
-          dynamodb_table = "${DYNAMODB_TABLE}"
-          encrypt        = true
+          echo "bucket         = \"${BUCKET_NAME}\"" > "shared/backend-${TARGET_ENV}.hcl"
+          echo "key            = \"environments/${TARGET_ENV}/terraform.tfstate\"" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "region         = \"us-east-1\"" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "dynamodb_table = \"${DYNAMODB_TABLE}\"" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "encrypt        = true" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "workspace_key_prefix = \"env\"" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "skip_credentials_validation = false" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "skip_metadata_api_check = false" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "skip_region_validation = false" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "use_path_style = false" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "" >> "shared/backend-${TARGET_ENV}.hcl"
+          echo "max_retries = 5" >> "shared/backend-${TARGET_ENV}.hcl"
           
-          workspace_key_prefix = "env"
-          skip_credentials_validation = false
-          skip_metadata_api_check = false
-          skip_region_validation = false
-          use_path_style = false
-          
-          max_retries = 5
-          EOF
-          
-          echo "Backend setup completed for $TARGET_ENV"
-          echo "Bucket: $BUCKET_NAME"
-          echo "DynamoDB: $DYNAMODB_TABLE"
+          echo "✅ Backend setup completed for $TARGET_ENV"
+          echo "📦 Bucket: $BUCKET_NAME"
+          echo "🗄️ DynamoDB: $DYNAMODB_TABLE"
+          echo "📄 Backend file updated:"
+          cat "shared/backend-${TARGET_ENV}.hcl"
 
       - name: Upload backend artifacts
         uses: actions/upload-artifact@v4
@@ -246,13 +249,11 @@ jobs:
       always() && 
       (
         (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'plan-and-apply' || github.event.inputs.action == 'plan-only')) ||
-        (github.event_name == 'push') ||
-        (github.event_name == 'pull_request')
+        (github.event_name == 'push')
       ) &&
       (
         (needs.setup-backends.result == 'success') ||
-        (needs.setup-backends.result == 'skipped') ||
-        (github.event_name == 'pull_request')
+        (needs.setup-backends.result == 'skipped')
       )
     outputs:
       plan-success: ${{ steps.plan-result.outputs.success }}
