@@ -51,8 +51,7 @@ jobs:
     name: Setup Terraform Backends
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'setup-only') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan-and-apply' && github.event.inputs.skip_setup != 'true') ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'setup-only' || (github.event.inputs.action == 'plan-and-apply' && github.event.inputs.skip_setup != 'true'))) ||
       (github.event_name == 'push')
     outputs:
       setup-success: ${{ steps.setup-result.outputs.success }}
@@ -172,15 +171,13 @@ jobs:
     if: |
       always() && 
       (
-        (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan-and-apply') ||
-        (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan-only') ||
+        (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'plan-and-apply' || github.event.inputs.action == 'plan-only')) ||
         (github.event_name == 'push') ||
         (github.event_name == 'pull_request')
       ) &&
       (
         (needs.setup-backends.result == 'success') ||
-        (needs.setup-backends.result == 'skipped' && github.event_name == 'workflow_dispatch' && github.event.inputs.skip_setup == 'true') ||
-        (github.event_name == 'push') ||
+        (needs.setup-backends.result == 'skipped') ||
         (github.event_name == 'pull_request')
       )
     outputs:
@@ -307,8 +304,8 @@ jobs:
         id: plan-result
         run: echo "success=true" >> $GITHUB_OUTPUT
 
-  terraform-apply:
-    name: Terraform Apply - ${{ needs.determine-environment.outputs.environment }}
+  deploy:
+    name: Deploy - ${{ needs.determine-environment.outputs.environment }}
     runs-on: ubuntu-latest
     needs: [setup-backends, determine-environment, terraform-plan]
     if: |
@@ -448,7 +445,7 @@ jobs:
           path: outputs.json
           retention-days: 30
 
-      - name: Set apply success output
+      - name: Set deploy success output
         id: apply-result
         run: echo "success=true" >> $GITHUB_OUTPUT
 
@@ -549,19 +546,22 @@ jobs:
           echo "Please review the terraform plan and approve if the changes are correct." >> $GITHUB_STEP_SUMMARY
           echo "approved=true" >> $GITHUB_OUTPUT
 
-  create-promotion-pr:
-    name: Create Promotion PR
+  promote-infrastructure:
+    name: Promote Infrastructure
     runs-on: ubuntu-latest
-    needs: [determine-environment, terraform-apply]
+    needs: [determine-environment, deploy]
     if: |
       always() && 
-      needs.terraform-apply.outputs.deploy-success == 'true' &&
+      needs.deploy.outputs.deploy-success == 'true' &&
       (
         (github.event_name == 'workflow_dispatch' && github.event.inputs.create_promotion_pr == 'true') ||
-        (github.event_name == 'push' && github.ref_name == 'dev') ||
-        (github.event_name == 'push' && github.ref_name == 'staging')
+        (github.event_name == 'push' && (github.ref_name == 'dev' || github.ref_name == 'staging'))
       ) &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.action != 'destroy')
+    outputs:
+      promotion_created: ${{ steps.promotion.outputs.skip_promotion == 'false' }}
+      source_env: ${{ steps.promotion.outputs.source_env }}
+      target_env: ${{ steps.promotion.outputs.target_env }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -671,3 +671,35 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ steps.promotion.outputs.source_env }}" >> $GITHUB_STEP_SUMMARY
           echo "**Reason:** This is the final environment in the promotion chain" >> $GITHUB_STEP_SUMMARY
+
+  workflow-summary:
+    name: Workflow Summary
+    runs-on: ubuntu-latest
+    needs: [determine-environment, deploy, promote-infrastructure]
+    if: always()
+    steps:
+      - name: Generate workflow summary
+        run: |
+          echo "## 🚀 Terraform Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.deploy.result }}" = "success" ]; then
+            echo "✅ **Deploy Status:** Successful" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Deploy Status:** Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.promote-infrastructure.result }}" = "success" ]; then
+            echo "✅ **Promotion Status:** Successful" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ needs.promote-infrastructure.outputs.promotion_created }}" = "true" ]; then
+              echo "📋 **Next Step:** Review and merge PR: ${{ needs.promote-infrastructure.outputs.source_env }} → ${{ needs.promote-infrastructure.outputs.target_env }}" >> $GITHUB_STEP_SUMMARY
+            fi
+          elif [ "${{ needs.promote-infrastructure.result }}" = "skipped" ]; then
+            echo "⏭️ **Promotion Status:** Skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Promotion Status:** Failed" >> $GITHUB_STEP_SUMMARY
+          fi
