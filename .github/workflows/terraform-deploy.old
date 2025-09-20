@@ -1,4 +1,5 @@
-name: Terraform Infrastructure Deploy
+# DISABLED - Too complex, using simple version
+# name: Terraform Infrastructure Deploy
 
 on:
   push:
