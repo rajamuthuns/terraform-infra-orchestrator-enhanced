@@ -1,0 +1,22 @@
+{
+  "environments": {
+    "dev": {
+      "require_pr_approval": false,
+      "require_terraform_approval": false,
+      "auto_deploy": true,
+      "promotion_target": "staging"
+    },
+    "staging": {
+      "require_pr_approval": true,
+      "require_terraform_approval": false,
+      "auto_deploy": true,
+      "promotion_target": "production"
+    },
+    "prod": {
+      "require_pr_approval": true,
+      "require_terraform_approval": true,
+      "auto_deploy": true,
+      "promotion_target": null
+    }
+  }
+}
