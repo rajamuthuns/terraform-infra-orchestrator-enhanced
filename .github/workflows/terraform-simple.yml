@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - dev
-      - staging
+      - staging  
       - production
   workflow_dispatch:
     inputs:
@@ -14,19 +14,19 @@ on:
         default: 'dev'
         type: choice
         options:
-        - dev
-        - staging
-        - production
+          - dev
+          - staging
+          - production
       action:
         description: 'Pipeline action'
         required: true
         default: 'plan-and-apply'
         type: choice
         options:
-        - setup-only
-        - plan-only
-        - plan-and-apply
-        - destroy
+          - setup-only
+          - plan-only
+          - plan-and-apply
+          - destroy
       skip_setup:
         description: 'Skip setup stage (if backends already exist)'
         required: false
