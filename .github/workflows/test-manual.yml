@@ -1,0 +1,25 @@
+name: Test Manual Trigger
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_env:
+        description: 'Test environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - production
+
+jobs:
+  test:
+    name: Test Manual Workflow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test manual trigger
+        run: |
+          echo "✅ Manual trigger works!"
+          echo "Environment: ${{ github.event.inputs.test_env }}"
+          echo "Event: ${{ github.event_name }}"
