@@ -47,8 +47,7 @@ jobs:
     name: Setup Terraform Backends
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'setup-only') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan-and-apply' && github.event.inputs.skip_setup != 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_setup != 'true') ||
       (github.event_name == 'push')
     outputs:
       setup-success: ${{ steps.setup-result.outputs.success }}
@@ -88,6 +87,11 @@ jobs:
       - name: Determine target environment
         id: target-env
         run: |
+          echo "🔧 Setup Backend Job Started"
+          echo "📋 Event: ${{ github.event_name }}"
+          echo "📋 Action: ${{ github.event.inputs.action }}"
+          echo "📋 Skip Setup: ${{ github.event.inputs.skip_setup }}"
+          
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             ENV="${{ github.event.inputs.environment }}"
           else
@@ -99,7 +103,7 @@ jobs:
             esac
           fi
           echo "environment=$ENV" >> $GITHUB_OUTPUT
-          echo "Target environment: $ENV"
+          echo "✅ Target environment: $ENV"
 
       - name: Setup backend configurations
         run: |
@@ -527,8 +531,12 @@ jobs:
   destroy-approval:
     name: Destroy Approval Required
     runs-on: ubuntu-latest
-    needs: [determine-environment]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    needs: [setup-backends, determine-environment]
+    if: |
+      always() && 
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'destroy' &&
+      (needs.setup-backends.result == 'success' || needs.setup-backends.result == 'skipped')
     environment: 
       name: destroy-${{ needs.determine-environment.outputs.environment }}
     outputs:
@@ -550,10 +558,12 @@ jobs:
           echo "- All Load Balancers" >> $GITHUB_STEP_SUMMARY
           echo "- All associated resources" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ✅ To proceed:" >> $GITHUB_STEP_SUMMARY
-          echo "1. Review the infrastructure that will be destroyed" >> $GITHUB_STEP_SUMMARY
-          echo "2. Click **Approve and deploy** if you want to proceed" >> $GITHUB_STEP_SUMMARY
-          echo "3. Or **Reject** to cancel the destroy operation" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ To proceed with destroy:" >> $GITHUB_STEP_SUMMARY
+          echo "1. This step requires manual approval in GitHub" >> $GITHUB_STEP_SUMMARY
+          echo "2. Go to Repository Settings → Environments" >> $GITHUB_STEP_SUMMARY
+          echo "3. Create environment: destroy-${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "4. Add required reviewers (yourself)" >> $GITHUB_STEP_SUMMARY
+          echo "5. Then approve this deployment to proceed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**This action cannot be undone!**" >> $GITHUB_STEP_SUMMARY
           echo "approved=true" >> $GITHUB_OUTPUT
@@ -561,7 +571,7 @@ jobs:
   terraform-destroy:
     name: Terraform Destroy - ${{ needs.determine-environment.outputs.environment }}
     runs-on: ubuntu-latest
-    needs: [determine-environment, destroy-approval]
+    needs: [setup-backends, determine-environment, destroy-approval]
     if: |
       always() && 
       needs.destroy-approval.outputs.approved == 'true' &&
