@@ -70,7 +70,6 @@ jobs:
           
           echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
           echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -104,7 +103,6 @@ jobs:
           fi
           echo "environment=$ENV" >> $GITHUB_OUTPUT
           echo "✅ Target environment: $ENV"
-
       - name: Setup backend configurations
         run: |
           TARGET_ENV="${{ steps.target-env.outputs.environment }}"
@@ -192,7 +190,6 @@ jobs:
           echo "🗄️ DynamoDB: $DYNAMODB_TABLE"
           echo "📄 Backend file updated:"
           cat "shared/backend-${TARGET_ENV}.hcl"
-
       - name: Upload backend artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -244,7 +241,6 @@ jobs:
           esac
           
           echo "Determined environment: $ENV"
-
   terraform-plan:
     name: Terraform Plan - ${{ needs.determine-environment.outputs.environment }}
     runs-on: ubuntu-latest
@@ -280,7 +276,6 @@ jobs:
           
           echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
           echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
-
       - name: Download backend artifacts
         if: needs.setup-backends.result == 'success'
         uses: actions/download-artifact@v4
@@ -321,7 +316,6 @@ jobs:
           echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
           echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
           echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
-
       - name: Check backend configuration
         run: |
           BACKEND_FILE="shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl"
@@ -343,7 +337,6 @@ jobs:
           
           echo "✅ Backend configuration looks good:"
           cat "$BACKEND_FILE"
-
       - name: Terraform Init
         run: |
           terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
@@ -354,7 +347,6 @@ jobs:
       - name: Terraform Workspace
         run: |
           terraform workspace select ${{ needs.determine-environment.outputs.environment }} || terraform workspace new ${{ needs.determine-environment.outputs.environment }}
-
       - name: Terraform Plan
         id: plan
         run: |
@@ -369,7 +361,6 @@ jobs:
           echo "## Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
           echo "**Tfvars File:** ${{ needs.determine-environment.outputs.tfvars-file }}" >> $GITHUB_STEP_SUMMARY
-
       - name: Upload plan artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -418,7 +409,6 @@ jobs:
           
           echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
           echo "GIT_ASKPASS=echo" >> $GITHUB_ENV
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -460,7 +450,6 @@ jobs:
           echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
           echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
           echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
-
       - name: Check backend configuration
         run: |
           BACKEND_FILE="shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl"
@@ -481,7 +470,6 @@ jobs:
           
           echo "✅ Backend configuration looks good:"
           cat "$BACKEND_FILE"
-
       - name: Terraform Init
         run: |
           terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
@@ -492,7 +480,6 @@ jobs:
       - name: Terraform Workspace
         run: |
           terraform workspace select ${{ needs.determine-environment.outputs.environment }}
-
       - name: Terraform Apply
         id: apply
         run: |
@@ -503,7 +490,6 @@ jobs:
             echo "No plan file found, running apply with tfvars..."
             terraform apply -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
           fi
-
       - name: Get outputs
         id: outputs
         run: |
@@ -516,7 +502,6 @@ jobs:
               echo "alb_url=http://$FIRST_ALB_URL" >> $GITHUB_OUTPUT
             fi
           fi
-
       - name: Upload outputs
         uses: actions/upload-artifact@v4
         with:
@@ -567,7 +552,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**This action cannot be undone!**" >> $GITHUB_STEP_SUMMARY
           echo "approved=true" >> $GITHUB_OUTPUT
-
   terraform-destroy:
     name: Terraform Destroy - ${{ needs.determine-environment.outputs.environment }}
     runs-on: ubuntu-latest
@@ -595,7 +579,6 @@ jobs:
           chmod 600 ~/.git-credentials
           
           echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -631,7 +614,6 @@ jobs:
           echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
           echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
           echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
-
       - name: Check backend configuration
         run: |
           BACKEND_FILE="shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl"
@@ -652,7 +634,6 @@ jobs:
           
           echo "✅ Backend configuration looks good:"
           cat "$BACKEND_FILE"
-
       - name: Terraform Init
         run: |
           terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
@@ -663,14 +644,12 @@ jobs:
       - name: Terraform Workspace
         run: |
           terraform workspace select ${{ needs.determine-environment.outputs.environment }}
-
       - name: Confirm Destroy Action
         run: |
           echo "🚨 DESTROY ACTION CONFIRMED"
           echo "Environment: ${{ needs.determine-environment.outputs.environment }}"
           echo "Tfvars file: ${{ needs.determine-environment.outputs.tfvars-file }}"
           echo "This will destroy ALL resources in the ${{ needs.determine-environment.outputs.environment }} environment!"
-
       - name: Terraform Destroy
         run: |
           if [ ! -f tfvars/${{ needs.determine-environment.outputs.tfvars-file }} ]; then
@@ -681,7 +660,6 @@ jobs:
           echo "🗑️ Starting terraform destroy..."
           terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
           echo "✅ Terraform destroy completed successfully"
-
   cleanup-and-retry-destroy:
     name: Cleanup ALB Logs and Retry Destroy
     runs-on: ubuntu-latest
@@ -710,7 +688,6 @@ jobs:
           chmod 600 ~/.git-credentials
           
           echo "GIT_CONFIG_GLOBAL=$HOME/.gitconfig" >> $GITHUB_ENV
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -746,7 +723,6 @@ jobs:
           echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
           echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
           echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
-
       - name: Cleanup ALB access log buckets
         run: |
           echo "🧹 Terraform destroy failed - cleaning up ALB access log buckets"
@@ -755,7 +731,6 @@ jobs:
           
           chmod +x scripts/cleanup-alb-logs.sh
           bash scripts/cleanup-alb-logs.sh "${{ needs.determine-environment.outputs.environment }}"
-
       - name: Retry Terraform Destroy
         run: |
           echo "🔄 Retrying Terraform destroy after ALB log cleanup..."
@@ -819,7 +794,6 @@ jobs:
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "ℹ️ **Note:** Terraform state and DynamoDB tables were preserved" >> $GITHUB_STEP_SUMMARY
-
   production-approval:
     name: Production Terraform Apply Approval
     runs-on: ubuntu-latest
@@ -838,7 +812,6 @@ jobs:
           echo "This step requires manual approval before applying changes to production." >> $GITHUB_STEP_SUMMARY
           echo "Please review the terraform plan and approve if the changes are correct." >> $GITHUB_STEP_SUMMARY
           echo "approved=true" >> $GITHUB_OUTPUT
-
   promote-infrastructure:
     name: Promote Infrastructure
     runs-on: ubuntu-latest
@@ -866,7 +839,6 @@ jobs:
         run: |
           git config --global user.email "github-actions@github.com"
           git config --global user.name "GitHub Actions"
-
       - name: Determine promotion target
         id: promotion
         run: |
@@ -889,7 +861,6 @@ jobs:
             echo "Promotion: $SOURCE_ENV → $TARGET_ENV"
             echo "skip_promotion=false" >> $GITHUB_OUTPUT
           fi
-
       - name: Create repository labels
         if: steps.promotion.outputs.skip_promotion == 'false'
         run: |
@@ -909,22 +880,16 @@ jobs:
           TARGET_ENV="${{ steps.promotion.outputs.target_env }}"
           
           PR_BODY="## 🚀 Infrastructure Promotion
-
           **Source Environment:** $SOURCE_ENV
           **Target Environment:** $TARGET_ENV
           **Source Commit:** ${{ github.sha }}
           **Workflow Run:** ${{ github.run_id }}
           **Deployment Status:** ✅ $SOURCE_ENV deployment completed successfully
-
           ### 📋 What's Being Promoted
-
           This PR promotes infrastructure changes from $SOURCE_ENV to $TARGET_ENV.
-
           ### 🚀 Next Steps
-
           1. **Review** all infrastructure changes
           2. **Approve and merge** to trigger $TARGET_ENV deployment
-
           ---
           *This PR was created automatically after successful $SOURCE_ENV deployment.*"
           
@@ -956,7 +921,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ **Status:** Promotion PR created successfully" >> $GITHUB_STEP_SUMMARY
           echo "📋 **Next Step:** Review and merge the PR to deploy to ${{ steps.promotion.outputs.target_env }}" >> $GITHUB_STEP_SUMMARY
-
       - name: No promotion needed
         if: steps.promotion.outputs.skip_promotion == 'true'
         run: |
@@ -964,7 +928,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ steps.promotion.outputs.source_env }}" >> $GITHUB_STEP_SUMMARY
           echo "**Reason:** This is the final environment in the promotion chain" >> $GITHUB_STEP_SUMMARY
-
   workflow-summary:
     name: Workflow Summary
     runs-on: ubuntu-latest
