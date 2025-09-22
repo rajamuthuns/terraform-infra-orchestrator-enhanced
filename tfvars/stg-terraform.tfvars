@@ -28,7 +28,7 @@ environment = "staging"
 
 alb_spec = {
   linux-alb = {
-    vpc_name             = "staging-mig-target-vpc"
+    vpc_name             = "dev-mig-target-vpc"
     http_enabled         = true
     https_enabled        = false
     name                 = "linux-alb"
@@ -36,7 +36,7 @@ alb_spec = {
     health_check_matcher = "200"
   },
   windows-alb = {
-    vpc_name             = "staging-mig-target-vpc"
+    vpc_name             = "dev-mig-target-vpc"
     http_enabled         = true
     https_enabled        = false
     name                 = "windows-alb"
@@ -51,7 +51,7 @@ ec2_spec = {
     enable_alb_integration = true
     alb_name               = "linux-alb"
     instance_type          = "t3.medium"
-    vpc_name               = "staging-mig-target-vpc"
+    vpc_name               = "dev-mig-target-vpc"
     key_name               = "raja-stg"
     os_type                = "linux"
     ami_name               = "amzn2-ami-hvm-*-x86_64-gp2"
@@ -90,7 +90,7 @@ ec2_spec = {
         encrypted   = true
       }
     ]
-    subnet_name = "staging-mig-private-subnet-1"
+    subnet_name = "dev-mig-private-subnet-1"
 
     tags = {
       Application = "WebServer"
@@ -100,7 +100,7 @@ ec2_spec = {
 
   "linux-appserver" = {
     instance_type    = "t3.large"
-    vpc_name         = "staging-mig-target-vpc"
+    vpc_name         = "dev-mig-target-vpc"
     key_name         = "raja-stg"
     os_type          = "linux"
     ami_name         = "amzn2-ami-hvm-*-x86_64-gp2"
@@ -131,7 +131,7 @@ ec2_spec = {
         encrypted   = true
       }
     ]
-    subnet_name = "staging-mig-private-subnet-2"
+    subnet_name = "dev-mig-private-subnet-2"
 
     tags = {
       Application = "AppServer"
@@ -184,7 +184,7 @@ ec2_spec = {
         encrypted   = true
       }
     ]
-    subnet_name = "staging-mig-private-subnet-1"
+    subnet_name = "dev-mig-private-subnet-1"
 
     tags = {
       Application = "WebServer"
@@ -194,7 +194,7 @@ ec2_spec = {
 
   "windows-appserver" = {
     instance_type    = "t3.xlarge"
-    vpc_name         = "staging-mig-target-vpc"
+    vpc_name         = "dev-mig-target-vpc"
     key_name         = "raja-stg"
     os_type          = "windows"
     ami_name         = "Windows_Server-2019-English-Full-Base-*"
@@ -239,7 +239,7 @@ ec2_spec = {
         encrypted   = true
       }
     ]
-    subnet_name = "staging-mig-private-subnet-2"
+    subnet_name = "dev-mig-private-subnet-2"
 
     tags = {
       Application = "AppServer"
