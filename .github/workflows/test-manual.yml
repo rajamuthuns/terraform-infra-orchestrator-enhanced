@@ -1,0 +1,16 @@
+name: Test Manual Trigger
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: 'Test message'
+        required: true
+        default: 'Hello World'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print message
+        run: echo "Message: ${{ github.event.inputs.message }}"
