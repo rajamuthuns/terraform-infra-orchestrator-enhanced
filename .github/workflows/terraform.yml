@@ -111,6 +111,13 @@ jobs:
           echo "📋 Event: ${{ github.event_name }}"
           echo "📋 Action: ${{ github.event.inputs.action }}"
           
+          # Debug: Check current directory and files
+          echo "📁 Current directory: $(pwd)"
+          echo "📁 Directory contents:"
+          ls -la
+          echo "📁 Config directory:"
+          ls -la config/ || echo "Config directory not found"
+          
           TARGET_ACCOUNT_ID=$(jq -r ".${TARGET_ENV}.account_id" config/aws-accounts.json)
           if [ "$TARGET_ACCOUNT_ID" = "null" ] || [ -z "$TARGET_ACCOUNT_ID" ]; then
             echo "❌ Error: Account ID not found for environment $TARGET_ENV"
