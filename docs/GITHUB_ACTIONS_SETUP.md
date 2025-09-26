@@ -91,8 +91,23 @@ This creates:
 
 ### 5. Create GitOps Branches
 
+Create the required branches manually:
+
 ```bash
-./scripts/create-gitops-branches.sh
+# Create and push dev branch
+git checkout -b dev
+git push -u origin dev
+
+# Create and push staging branch  
+git checkout -b staging
+git push -u origin staging
+
+# Create and push production branch
+git checkout -b production
+git push -u origin production
+
+# Return to main branch
+git checkout main
 ```
 
 This creates:

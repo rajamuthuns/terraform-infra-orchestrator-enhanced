@@ -52,13 +52,13 @@ init:
 		echo "Error: ENV variable is required"; \
 		exit 1; \
 	fi
-	@echo "🔧 Initializing Terraform for $(ENV)..."
-	@if [ ! -f "shared/backend-$(ENV).hcl" ]; then \
-		echo "Error: Backend configuration not found: shared/backend-$(ENV).hcl"; \
-		echo "Please run the backend setup script first."; \
+	@echo "🔧 Initializing Terraform with common backend..."
+	@if [ ! -f "shared/backend-common.hcl" ]; then \
+		echo "Error: Common backend configuration not found: shared/backend-common.hcl"; \
+		echo "Please run the backend setup script first: ./scripts/setup-backend-per-account.sh"; \
 		exit 1; \
 	fi
-	terraform init -backend-config=shared/backend-$(ENV).hcl
+	terraform init -backend-config=shared/backend-common.hcl
 
 # Plan changes
 plan:

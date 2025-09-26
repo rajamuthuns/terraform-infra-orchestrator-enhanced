@@ -1,72 +1,155 @@
-# Shared Backend Configurations
+# Common Backend Configuration
 
-This directory contains Terraform backend configuration files for each environment. These files are used to configure remote state storage in S3 with DynamoDB locking.
+This directory contains the common Terraform backend configuration used by all environments. The setup uses a single S3 bucket and DynamoDB table with Terraform workspaces for environment isolation.
 
 ## Files
 
-- **`backend-dev.hcl`** - Development environment backend configuration
-- **`backend-staging.hcl`** - Staging environment backend configuration  
-- **`backend-prod.hcl`** - Production environment backend configuration
+- **`backend-common.hcl`** - Common backend configuration for all environments
+
+## Architecture Overview
+
+```
+Single S3 Bucket: terraform-state-central-multi-env
+├── environments/
+│   ├── dev/
+│   │   └── terraform.tfstate
+│   ├── staging/
+│   │   └── terraform.tfstate
+│   └── production/
+│       └── terraform.tfstate
+
+Single DynamoDB Table: terraform-state-locks-common
+└── Handles locking for all environments
+```
 
 ## Automatic Setup
 
-These files contain placeholder values that get automatically replaced when you run the backend setup script:
+Run the backend setup script to create the common resources and workspaces:
 
 ```bash
-# Setup backend for specific account
+# Setup backend for specific account/environment
 ./scripts/setup-backend-per-account.sh 221106935066
 
-# Setup backends for all environments
+# Setup backend for all environments
 ./scripts/setup-backend-per-account.sh
 ```
 
-## Before Setup (Placeholder Values)
+## Backend Configuration
+
+The common backend configuration (`backend-common.hcl`):
 
 ```hcl
-bucket         = "REPLACE_WITH_ACTUAL_BUCKET_NAME"
-key            = "environments/dev/terraform.tfstate"
+# Common backend configuration for all environments
+bucket         = "terraform-state-central-multi-env"
+key            = "terraform.tfstate"
 region         = "us-east-1"
-dynamodb_table = "REPLACE_WITH_ACTUAL_DYNAMODB_TABLE_NAME"
+dynamodb_table = "terraform-state-locks-common"
 encrypt        = true
-```
 
-## After Setup (Actual Values)
+# Workspace configuration - creates separate state files per workspace
+workspace_key_prefix = "environments"
 
-```hcl
-bucket         = "terraform-state-dev-221106935066"
-key            = "environments/dev/terraform.tfstate"
-region         = "us-east-1"
-dynamodb_table = "terraform-state-locks-dev"
-encrypt        = true
+skip_credentials_validation = false
+skip_metadata_api_check = false
+skip_region_validation = false
+use_path_style = false
+max_retries = 5
 ```
 
 ## Usage
 
-Once the backend is set up, initialize Terraform with the appropriate backend config:
+### Initialize and Select Environment
 
 ```bash
-# Development
-terraform init -backend-config=shared/backend-dev.hcl
+# Initialize with common backend
+terraform init -backend-config=shared/backend-common.hcl
 
-# Staging
-terraform init -backend-config=shared/backend-staging.hcl
+# List available workspaces
+terraform workspace list
 
-# Production
-terraform init -backend-config=shared/backend-prod.hcl
+# Select environment workspace
+terraform workspace select dev
+# or
+terraform workspace select staging
+# or  
+terraform workspace select production
+
+# Plan for current workspace
+terraform plan -var-file=tfvars/$(terraform workspace show)-terraform.tfvars
+
+# Apply for current workspace
+terraform apply -var-file=tfvars/$(terraform workspace show)-terraform.tfvars
+```
+
+### Quick Environment Switch
+
+```bash
+# Switch to dev and plan
+terraform workspace select dev
+terraform plan -var-file=tfvars/dev-terraform.tfvars
+
+# Switch to staging and plan
+terraform workspace select staging
+terraform plan -var-file=tfvars/stg-terraform.tfvars
 ```
 
 ## Workspace Isolation
 
-Each environment uses its own:
-- **S3 Bucket**: `terraform-state-{env}-{account-id}`
-- **DynamoDB Table**: `terraform-state-locks-{env}`
-- **Terraform Workspace**: `{env}` (dev, staging, production)
+Each environment uses:
+- **Common S3 Bucket**: `terraform-state-central-multi-env`
+- **Common DynamoDB Table**: `terraform-state-locks-common`
+- **Separate State Files**: `environments/{workspace}/terraform.tfstate`
+- **Terraform Workspace**: `dev`, `staging`, `production`
 
-This ensures complete isolation between environments while sharing the same infrastructure code.
+## Benefits
+
+### Cost Optimization
+- **Single S3 bucket** instead of 3+ separate buckets
+- **Single DynamoDB table** instead of 3+ separate tables
+- Reduced AWS resource management overhead
+
+### Simplified Management
+- One backend configuration for all environments
+- Centralized state file location
+- Easy to backup and monitor all environments
+
+### Environment Isolation
+- Workspaces provide complete state isolation
+- Cross-account deployment maintains security boundaries
+- Clear separation of environment resources
 
 ## Security Features
 
-- **Encryption**: All state files are encrypted at rest
-- **Versioning**: S3 bucket versioning is enabled for state history
+- **Encryption**: All state files are encrypted at rest with AES256
+- **Versioning**: S3 bucket versioning enabled for state history
 - **Locking**: DynamoDB provides state locking to prevent concurrent modifications
-- **Access Control**: Each environment uses separate AWS accounts for isolation
+- **Cross-Account Access**: Bucket policy allows access from environment-specific AWS accounts
+- **Access Control**: Each environment deploys to separate AWS accounts for isolation
+
+## Troubleshooting
+
+### Common Commands
+
+```bash
+# Check current workspace
+terraform workspace show
+
+# List all workspaces
+terraform workspace list
+
+# Create new workspace (if needed)
+terraform workspace new <environment>
+
+# Delete workspace (careful!)
+terraform workspace delete <environment>
+
+# Reinitialize backend
+terraform init -reconfigure -backend-config=shared/backend-common.hcl
+```
+
+### State File Locations
+
+State files are stored at these S3 paths:
+- Dev: `s3://terraform-state-central-multi-env/environments/dev/terraform.tfstate`
+- Staging: `s3://terraform-state-central-multi-env/environments/staging/terraform.tfstate`
+- Production: `s3://terraform-state-central-multi-env/environments/production/terraform.tfstate`

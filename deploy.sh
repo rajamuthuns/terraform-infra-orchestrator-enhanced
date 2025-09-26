@@ -101,14 +101,15 @@ if [ ! -f "tfvars/$TFVARS_FILE" ]; then
     exit 1
 fi
 
-# Check if backend configuration exists
-if [ ! -f "shared/backend-$ENVIRONMENT.hcl" ]; then
-    print_warning "Backend configuration not found: shared/backend-$ENVIRONMENT.hcl"
-    print_status "You may need to run the backend setup script first"
+# Check if common backend configuration exists
+if [ ! -f "shared/backend-common.hcl" ]; then
+    print_warning "Common backend configuration not found: shared/backend-common.hcl"
+    print_status "You may need to run the backend setup script first:"
+    print_status "./scripts/setup-backend-per-account.sh"
     print_status "Continuing with local state..."
     BACKEND_CONFIG=""
 else
-    BACKEND_CONFIG="-backend-config=shared/backend-$ENVIRONMENT.hcl"
+    BACKEND_CONFIG="-backend-config=shared/backend-common.hcl"
 fi
 
 # Initialize Terraform
