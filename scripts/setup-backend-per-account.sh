@@ -143,7 +143,7 @@ setup_common_backend() {
   # Build list of account ARNs for cross-account access
   ACCOUNT_ARNS="\"arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:root\""
   
-  # Add environment accounts
+  # Add environment accounts with OrganizationAccountAccessRole
   for env in $(jq -r 'keys[]' "$ACCOUNTS_FILE"); do
     # Skip shared_services entry
     if [ "$env" = "shared_services" ]; then
@@ -153,6 +153,9 @@ setup_common_backend() {
     account_id=$(jq -r ".${env}.account_id" "$ACCOUNTS_FILE")
     if [ "$account_id" != "null" ] && [ "$account_id" != "REPLACE_WITH_PRODUCTION_ACCOUNT_ID" ] && [ "$account_id" != "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID" ]; then
       ACCOUNT_ARNS="${ACCOUNT_ARNS},\"arn:aws:iam::${account_id}:role/OrganizationAccountAccessRole\""
+      # Also add root access for the account (for broader access patterns)
+      ACCOUNT_ARNS="${ACCOUNT_ARNS},\"arn:aws:iam::${account_id}:root\""
+      echo "  - Added access for $env account: $account_id (via OrganizationAccountAccessRole and root)"
     fi
   done
   
@@ -169,7 +172,7 @@ setup_common_backend() {
     \"Version\": \"2012-10-17\",
     \"Statement\": [
       {
-        \"Sid\": \"AllowSpecificAccounts\",
+        \"Sid\": \"AllowCrossAccountAccess\",
         \"Effect\": \"Allow\",
         \"Principal\": {
           \"AWS\": [${ACCOUNT_ARNS}]
@@ -186,29 +189,6 @@ setup_common_backend() {
           \"arn:aws:s3:::${COMMON_BUCKET_NAME}\",
           \"arn:aws:s3:::${COMMON_BUCKET_NAME}/*\"
         ]
-      },
-      {
-        \"Sid\": \"AllowOrganizationAccountAccessRole\",
-        \"Effect\": \"Allow\",
-        \"Principal\": {
-          \"AWS\": \"*\"
-        },
-        \"Action\": [
-          \"s3:GetObject\",
-          \"s3:PutObject\",
-          \"s3:DeleteObject\",
-          \"s3:ListBucket\",
-          \"s3:GetBucketLocation\"
-        ],
-        \"Resource\": [
-          \"arn:aws:s3:::${COMMON_BUCKET_NAME}\",
-          \"arn:aws:s3:::${COMMON_BUCKET_NAME}/*\"
-        ],
-        \"Condition\": {
-          \"StringLike\": {
-            \"aws:PrincipalArn\": \"arn:aws:iam::*:role/OrganizationAccountAccessRole\"
-          }
-        }
       }
     ]
   }"
