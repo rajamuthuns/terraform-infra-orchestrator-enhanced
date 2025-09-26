@@ -1,6 +1,6 @@
-# Common backend configuration for all environments
-# Usage: terraform init -backend-config=shared/backend-common.hcl
-# Workspaces will handle environment separation
+# Cross-Account Backend Configuration with Role Assumption
+# Use this when running Terraform from a different account than the shared services account
+# This config tells Terraform to assume a role to access the backend resources
 
 bucket         = "terraform-state-central-multi-env"
 key            = "terraform.tfstate"
@@ -8,11 +8,11 @@ region         = "us-east-1"
 dynamodb_table = "terraform-state-locks-common"
 encrypt        = true
 
-# Workspace configuration - this creates separate state files per workspace
+# Workspace configuration - creates separate state files per workspace
 workspace_key_prefix = "environments"
 
-# Cross-account access - assume role in shared services account
-assume_role {
+# Assume role in shared services account to access backend
+assume_role = {
   role_arn = "arn:aws:iam::852998999082:role/OrganizationAccountAccessRole"
   session_name = "terraform-backend-access"
 }
