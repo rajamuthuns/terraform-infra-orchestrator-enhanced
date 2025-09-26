@@ -70,21 +70,38 @@ find_alb_log_buckets() {
     
     local found_buckets=()
     
-    # Get all buckets and filter for ALB access log patterns
-    local all_buckets=$(aws s3api list-buckets --query "Buckets[].Name" --output text 2>/dev/null || true)
+    # Get all buckets as JSON and extract names properly
+    local bucket_list=$(aws s3api list-buckets --query "Buckets[].Name" --output json 2>/dev/null || echo '[]')
     
-    if [ -n "$all_buckets" ]; then
-        for bucket in $all_buckets; do
+    # Parse JSON and check each bucket
+    while IFS= read -r bucket; do
+        if [ -n "$bucket" ] && [ "$bucket" != "null" ]; then
             # Check if bucket matches ALB access log patterns for this environment
-            if [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"access"* ]] && [[ "$bucket" == *"log"* ]]; then
-                found_buckets+=("$bucket")
-                print_color $YELLOW "  Found: $bucket"
-            elif [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"log"* ]]; then
+            if [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && ([[ "$bucket" == *"access"* ]] && [[ "$bucket" == *"log"* ]] || [[ "$bucket" == *"log"* ]]); then
                 found_buckets+=("$bucket")
                 print_color $YELLOW "  Found: $bucket"
             fi
-        done
-    fi
+        fi
+    done < <(echo "$bucket_list" | jq -r '.[]?' 2>/dev/null || true)
+    
+    # Also check for specific known patterns that might be missed
+    local specific_patterns=(
+        "linux-alb-$env-linux-alb-$env-alb-access-logs"
+        "windows-alb-$env-windows-alb-$env-alb-access-logs"
+        "*-alb-$env-*-alb-access-logs"
+    )
+    
+    for pattern in "${specific_patterns[@]}"; do
+        while IFS= read -r bucket; do
+            if [ -n "$bucket" ] && [ "$bucket" != "null" ]; then
+                # Check if this bucket matches the specific pattern and isn't already found
+                if [[ "$bucket" == $pattern ]] && [[ ! " ${found_buckets[@]} " =~ " $bucket " ]]; then
+                    found_buckets+=("$bucket")
+                    print_color $YELLOW "  Found (specific pattern): $bucket"
+                fi
+            fi
+        done < <(echo "$bucket_list" | jq -r '.[]?' 2>/dev/null || true)
+    done
     
     # Remove duplicates and return
     printf '%s\n' "${found_buckets[@]}" | sort -u
