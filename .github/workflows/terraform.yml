@@ -202,6 +202,14 @@ jobs:
           # Build list of account ARNs that need access to the backend
           ACCOUNT_ARNS="\"arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:root\""
           
+          # Add current user/account for administrative access
+          CURRENT_USER_ARN=$(aws sts get-caller-identity --query Arn --output text)
+          CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ACCOUNT_ARNS="${ACCOUNT_ARNS},\"${CURRENT_USER_ARN}\""
+          ACCOUNT_ARNS="${ACCOUNT_ARNS},\"arn:aws:iam::${CURRENT_ACCOUNT_ID}:root\""
+          echo "  - Added access for current user: $CURRENT_USER_ARN"
+          echo "  - Added access for current account: $CURRENT_ACCOUNT_ID"
+          
           # Add environment accounts from config
           for env in $(jq -r 'keys[]' config/aws-accounts.json); do
             if [ "$env" != "shared_services" ]; then
@@ -213,7 +221,7 @@ jobs:
             fi
           done
           
-          # Apply bucket policy
+          # Apply bucket policy for cross-account and cross-region access
           aws s3api put-bucket-policy --bucket "$COMMON_BUCKET_NAME" --policy "{
             \"Version\": \"2012-10-17\",
             \"Statement\": [
@@ -227,12 +235,41 @@ jobs:
                   \"s3:GetObject\",
                   \"s3:PutObject\",
                   \"s3:DeleteObject\",
+                  \"s3:ListBucket\",
+                  \"s3:GetBucketLocation\",
+                  \"s3:ListBucketVersions\"
+                ],
+                \"Resource\": [
+                  \"arn:aws:s3:::${COMMON_BUCKET_NAME}\",
+                  \"arn:aws:s3:::${COMMON_BUCKET_NAME}/*\"
+                ],
+                \"Condition\": {
+                  \"StringEquals\": {
+                    \"s3:x-amz-server-side-encryption\": \"AES256\"
+                  }
+                }
+              },
+              {
+                \"Sid\": \"AllowOrganizationAccountAccessRole\",
+                \"Effect\": \"Allow\",
+                \"Principal\": {
+                  \"AWS\": \"*\"
+                },
+                \"Action\": [
+                  \"s3:GetObject\",
+                  \"s3:PutObject\",
+                  \"s3:DeleteObject\",
                   \"s3:ListBucket\"
                 ],
                 \"Resource\": [
                   \"arn:aws:s3:::${COMMON_BUCKET_NAME}\",
                   \"arn:aws:s3:::${COMMON_BUCKET_NAME}/*\"
-                ]
+                ],
+                \"Condition\": {
+                  \"StringLike\": {
+                    \"aws:PrincipalArn\": \"arn:aws:iam::*:role/OrganizationAccountAccessRole\"
+                  }
+                }
               }
             ]
           }"
@@ -396,6 +433,44 @@ jobs:
           # For common backend approach, we don't need to assume roles
           # All environments use the same backend in the current account
           echo "✅ Using common backend approach - no role assumption needed"
+      - name: Assume shared services role for backend access
+        run: |
+          # Get shared services account ID from config
+          if [ -f "config/aws-accounts.json" ]; then
+            SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+            
+            if [ "$SHARED_SERVICES_ACCOUNT_ID" != "null" ] && [ "$SHARED_SERVICES_ACCOUNT_ID" != "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID" ]; then
+              echo "🔐 Assuming role in shared services account for backend access: $SHARED_SERVICES_ACCOUNT_ID"
+              
+              SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+              
+              if SHARED_CREDENTIALS=$(aws sts assume-role \
+                --role-arn "$SHARED_SERVICES_ROLE_ARN" \
+                --role-session-name "backend-access-${{ github.run_id }}" \
+                --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                --output text 2>&1); then
+                
+                export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
+                export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
+                export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
+                
+                # Store credentials for subsequent steps
+                echo "AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
+                echo "AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
+                echo "AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+                
+                echo "✅ Successfully assumed role in shared services account for backend access"
+              else
+                echo "⚠️ Failed to assume role in shared services account: $SHARED_CREDENTIALS"
+                echo "Continuing with current credentials (organization master account)"
+              fi
+            else
+              echo "⚠️ Shared services account not configured, using current credentials"
+            fi
+          else
+            echo "⚠️ Config file not found, using current credentials"
+          fi
+
       - name: Check backend configuration
         run: |
           BACKEND_FILE="shared/backend-common.hcl"

@@ -156,18 +156,20 @@ setup_common_backend() {
     fi
   done
   
-  # Add management account if different from shared services
-  CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "")
-  if [ -n "$CURRENT_ACCOUNT_ID" ] && [ "$CURRENT_ACCOUNT_ID" != "$SHARED_SERVICES_ACCOUNT_ID" ]; then
-    ACCOUNT_ARNS="${ACCOUNT_ARNS},\"arn:aws:iam::${CURRENT_ACCOUNT_ID}:root\""
-  fi
+  # Add current user/account for administrative access
+  CURRENT_USER_ARN=$(aws sts get-caller-identity --query Arn --output text)
+  CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+  ACCOUNT_ARNS="${ACCOUNT_ARNS},\"${CURRENT_USER_ARN}\""
+  ACCOUNT_ARNS="${ACCOUNT_ARNS},\"arn:aws:iam::${CURRENT_ACCOUNT_ID}:root\""
+  echo "  - Added access for current user: $CURRENT_USER_ARN"
+  echo "  - Added access for current account: $CURRENT_ACCOUNT_ID"
   
-  # Apply bucket policy
+  # Apply comprehensive bucket policy for cross-account and cross-region access
   aws s3api put-bucket-policy --bucket "$COMMON_BUCKET_NAME" --policy "{
     \"Version\": \"2012-10-17\",
     \"Statement\": [
       {
-        \"Sid\": \"AllowCrossAccountAccess\",
+        \"Sid\": \"AllowSpecificAccounts\",
         \"Effect\": \"Allow\",
         \"Principal\": {
           \"AWS\": [${ACCOUNT_ARNS}]
@@ -176,12 +178,37 @@ setup_common_backend() {
           \"s3:GetObject\",
           \"s3:PutObject\",
           \"s3:DeleteObject\",
-          \"s3:ListBucket\"
+          \"s3:ListBucket\",
+          \"s3:GetBucketLocation\",
+          \"s3:ListBucketVersions\"
         ],
         \"Resource\": [
           \"arn:aws:s3:::${COMMON_BUCKET_NAME}\",
           \"arn:aws:s3:::${COMMON_BUCKET_NAME}/*\"
         ]
+      },
+      {
+        \"Sid\": \"AllowOrganizationAccountAccessRole\",
+        \"Effect\": \"Allow\",
+        \"Principal\": {
+          \"AWS\": \"*\"
+        },
+        \"Action\": [
+          \"s3:GetObject\",
+          \"s3:PutObject\",
+          \"s3:DeleteObject\",
+          \"s3:ListBucket\",
+          \"s3:GetBucketLocation\"
+        ],
+        \"Resource\": [
+          \"arn:aws:s3:::${COMMON_BUCKET_NAME}\",
+          \"arn:aws:s3:::${COMMON_BUCKET_NAME}/*\"
+        ],
+        \"Condition\": {
+          \"StringLike\": {
+            \"aws:PrincipalArn\": \"arn:aws:iam::*:role/OrganizationAccountAccessRole\"
+          }
+        }
       }
     ]
   }"
