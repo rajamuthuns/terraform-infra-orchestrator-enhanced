@@ -244,7 +244,9 @@ jobs:
                   \"s3:DeleteObject\",
                   \"s3:ListBucket\",
                   \"s3:GetBucketLocation\",
-                  \"s3:ListBucketVersions\"
+                  \"s3:ListBucketVersions\",
+                  \"s3:GetBucketVersioning\",
+                  \"s3:PutBucketVersioning\"
                 ],
                 \"Resource\": [
                   \"arn:aws:s3:::${COMMON_BUCKET_NAME}\",
@@ -612,6 +614,7 @@ jobs:
             role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
             session_name = "terraform-backend-${{ github.run_id }}"
           }
+          
           skip_credentials_validation = false
           skip_metadata_api_check = false
           skip_region_validation = false
@@ -880,6 +883,34 @@ jobs:
           
           chmod +x scripts/cleanup-alb-logs.sh
           bash scripts/cleanup-alb-logs.sh "${{ needs.determine-environment.outputs.environment }}"
+          
+          # Additional cleanup for specific ALB log buckets
+          echo "🧹 Additional cleanup for ALB access log buckets..."
+          
+          # Find and clean all ALB access log buckets for this environment
+          for bucket in $(aws s3api list-buckets --query "Buckets[?contains(Name, 'alb-access-logs') && contains(Name, '${{ needs.determine-environment.outputs.environment }}')].Name" --output text); do
+            if [ -n "$bucket" ]; then
+              echo "🗑️ Cleaning bucket: $bucket"
+              
+              # Delete all object versions
+              aws s3api list-object-versions --bucket "$bucket" --query 'Versions[].{Key:Key,VersionId:VersionId}' --output text | while read key version; do
+                if [ -n "$key" ] && [ -n "$version" ]; then
+                  aws s3api delete-object --bucket "$bucket" --key "$key" --version-id "$version" || true
+                fi
+              done
+              
+              # Delete all delete markers
+              aws s3api list-object-versions --bucket "$bucket" --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output text | while read key version; do
+                if [ -n "$key" ] && [ -n "$version" ]; then
+                  aws s3api delete-object --bucket "$bucket" --key "$key" --version-id "$version" || true
+                fi
+              done
+              
+              echo "✅ Cleaned bucket: $bucket"
+            fi
+          done
+          
+          echo "✅ Additional ALB bucket cleanup completed"
       - name: Retry Terraform Destroy
         run: |
           echo "🔄 Retrying Terraform destroy after ALB log cleanup..."

@@ -68,45 +68,43 @@ find_alb_log_buckets() {
     
     print_color $BLUE "🔍 Finding ALB access log buckets for environment: $env"
     
-    # Common ALB log bucket naming patterns
-    local bucket_patterns=(
-        "*alb*access*log*${env}*"
-        "*${env}*alb*access*log*"
-        "*alb*log*${env}*"
-        "*${env}*alb*log*"
-        "*access*log*${env}*"
-        "*${env}*access*log*"
-    )
-    
     local found_buckets=()
     
-    # Search for buckets matching ALB log patterns
-    for pattern in "${bucket_patterns[@]}"; do
-        local buckets=$(aws s3api list-buckets --query "Buckets[?contains(Name, '${env}') && (contains(Name, 'alb') || contains(Name, 'access') || contains(Name, 'log'))].Name" --output text 2>/dev/null || true)
-        
-        if [ -n "$buckets" ]; then
-            for bucket in $buckets; do
-                # Check if bucket is used for ALB access logs
-                local bucket_policy=$(aws s3api get-bucket-policy --bucket "$bucket" --query 'Policy' --output text 2>/dev/null || echo "")
-                local bucket_logging=$(aws s3api get-bucket-logging --bucket "$bucket" 2>/dev/null || echo "")
-                
-                # Check if bucket has ALB-related tags or policies
-                if [[ "$bucket_policy" == *"elasticloadbalancing"* ]] || [[ "$bucket" == *"alb"* ]] || [[ "$bucket" == *"access-log"* ]]; then
-                    found_buckets+=("$bucket")
-                fi
-            done
+    # Get all buckets as JSON and extract names properly
+    local bucket_list=$(aws s3api list-buckets --query "Buckets[].Name" --output json 2>/dev/null || echo '[]')
+    
+    # Parse JSON and check each bucket
+    while IFS= read -r bucket; do
+        if [ -n "$bucket" ] && [ "$bucket" != "null" ]; then
+            # Check if bucket matches ALB access log patterns for this environment
+            # Pattern 1: Contains env, alb, and access-logs
+            if [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"access-logs"* ]]; then
+                found_buckets+=("$bucket")
+                print_color $YELLOW "  Found (pattern 1): $bucket"
+            # Pattern 2: Contains env, alb, and logs (broader match)
+            elif [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"log"* ]]; then
+                found_buckets+=("$bucket")
+                print_color $YELLOW "  Found (pattern 2): $bucket"
+            fi
+        fi
+    done < <(echo "$bucket_list" | jq -r '.[]?' 2>/dev/null || true)
+    
+    # Also check for specific known patterns that might be missed
+    local specific_buckets=(
+        "linux-alb-$env-linux-alb-$env-alb-access-logs"
+        "windows-alb-$env-windows-alb-$env-alb-access-logs"
+    )
+    
+    # Check if these specific buckets exist and add them if not already found
+    for specific_bucket in "${specific_buckets[@]}"; do
+        if aws s3api head-bucket --bucket "$specific_bucket" 2>/dev/null; then
+            # Check if not already in found_buckets array
+            if [[ ! " ${found_buckets[@]} " =~ " $specific_bucket " ]]; then
+                found_buckets+=("$specific_bucket")
+                print_color $YELLOW "  Found (specific check): $specific_bucket"
+            fi
         fi
     done
-    
-    # Also check for buckets created by Terraform ALB module
-    local tf_alb_buckets=$(aws s3api list-buckets --query "Buckets[?contains(Name, '${env}') && contains(Name, 'alb')].Name" --output text 2>/dev/null || true)
-    if [ -n "$tf_alb_buckets" ]; then
-        for bucket in $tf_alb_buckets; do
-            if [[ ! " ${found_buckets[@]} " =~ " ${bucket} " ]]; then
-                found_buckets+=("$bucket")
-            fi
-        done
-    fi
     
     # Remove duplicates and return
     printf '%s\n' "${found_buckets[@]}" | sort -u
@@ -135,27 +133,44 @@ empty_s3_bucket() {
     # Delete all object versions and delete markers
     local versions=$(aws s3api list-object-versions --bucket "$bucket_name" --region "$bucket_region" --output json 2>/dev/null || echo '{}')
     
-    # Process versions
-    echo "$versions" | jq -r '.Versions[]? | select(.Key != null) | "\(.Key)\t\(.VersionId)"' | \
-    while IFS=$'\t' read -r key version_id; do
-        if [ -n "$key" ] && [ -n "$version_id" ]; then
-            echo "  Deleting version: $key ($version_id)"
-            aws s3api delete-object --bucket "$bucket_name" --key "$key" --version-id "$version_id" --region "$bucket_region" >/dev/null 2>&1 || true
-        fi
-    done
+    # Use batch delete for efficiency - delete versions
+    local delete_versions=$(echo "$versions" | jq -c '{Objects: [.Versions[]? | select(.Key != null) | {Key: .Key, VersionId: .VersionId}]}' 2>/dev/null || echo '{"Objects":[]}')
+    if [ "$(echo "$delete_versions" | jq '.Objects | length')" -gt 0 ]; then
+        echo "  Batch deleting $(echo "$delete_versions" | jq '.Objects | length') object versions..."
+        aws s3api delete-objects --bucket "$bucket_name" --region "$bucket_region" --delete "$delete_versions" >/dev/null 2>&1 || true
+    fi
     
-    # Process delete markers
-    echo "$versions" | jq -r '.DeleteMarkers[]? | select(.Key != null) | "\(.Key)\t\(.VersionId)"' | \
-    while IFS=$'\t' read -r key version_id; do
-        if [ -n "$key" ] && [ -n "$version_id" ]; then
-            echo "  Deleting delete marker: $key ($version_id)"
-            aws s3api delete-object --bucket "$bucket_name" --key "$key" --version-id "$version_id" --region "$bucket_region" >/dev/null 2>&1 || true
-        fi
-    done
+    # Use batch delete for efficiency - delete markers
+    local delete_markers=$(echo "$versions" | jq -c '{Objects: [.DeleteMarkers[]? | select(.Key != null) | {Key: .Key, VersionId: .VersionId}]}' 2>/dev/null || echo '{"Objects":[]}')
+    if [ "$(echo "$delete_markers" | jq '.Objects | length')" -gt 0 ]; then
+        echo "  Batch deleting $(echo "$delete_markers" | jq '.Objects | length') delete markers..."
+        aws s3api delete-objects --bucket "$bucket_name" --region "$bucket_region" --delete "$delete_markers" >/dev/null 2>&1 || true
+    fi
     
     # Delete any remaining objects (non-versioned)
     print_color $YELLOW "🧹 Removing any remaining objects..."
     aws s3 rm "s3://$bucket_name" --recursive --region "$bucket_region" >/dev/null 2>&1 || true
+    
+    # Additional aggressive cleanup if needed
+    echo "  Final cleanup pass..."
+    local remaining_versions=$(aws s3api list-object-versions --bucket "$bucket_name" --region "$bucket_region" --output json 2>/dev/null || echo '{}')
+    local version_count=$(echo "$remaining_versions" | jq '.Versions | length' 2>/dev/null || echo "0")
+    local marker_count=$(echo "$remaining_versions" | jq '.DeleteMarkers | length' 2>/dev/null || echo "0")
+    
+    if [ "$version_count" -gt 0 ] || [ "$marker_count" -gt 0 ]; then
+        echo "  Found $version_count versions and $marker_count delete markers, cleaning up..."
+        
+        # One more batch delete attempt
+        if [ "$version_count" -gt 0 ]; then
+            local final_versions=$(echo "$remaining_versions" | jq -c '{Objects: [.Versions[]? | select(.Key != null) | {Key: .Key, VersionId: .VersionId}]}')
+            aws s3api delete-objects --bucket "$bucket_name" --region "$bucket_region" --delete "$final_versions" >/dev/null 2>&1 || true
+        fi
+        
+        if [ "$marker_count" -gt 0 ]; then
+            local final_markers=$(echo "$remaining_versions" | jq -c '{Objects: [.DeleteMarkers[]? | select(.Key != null) | {Key: .Key, VersionId: .VersionId}]}')
+            aws s3api delete-objects --bucket "$bucket_name" --region "$bucket_region" --delete "$final_markers" >/dev/null 2>&1 || true
+        fi
+    fi
     
     # Verify bucket is empty
     local object_count=$(aws s3 ls "s3://$bucket_name" --recursive --region "$bucket_region" 2>/dev/null | wc -l || echo "0")

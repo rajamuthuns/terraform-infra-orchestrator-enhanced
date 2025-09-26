@@ -183,7 +183,9 @@ setup_common_backend() {
           \"s3:DeleteObject\",
           \"s3:ListBucket\",
           \"s3:GetBucketLocation\",
-          \"s3:ListBucketVersions\"
+          \"s3:ListBucketVersions\",
+          \"s3:GetBucketVersioning\",
+          \"s3:PutBucketVersioning\"
         ],
         \"Resource\": [
           \"arn:aws:s3:::${COMMON_BUCKET_NAME}\",
