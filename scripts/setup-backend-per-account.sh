@@ -217,7 +217,63 @@ setup_common_backend() {
       --key-schema AttributeName=LockID,KeyType=HASH \
       --billing-mode PAY_PER_REQUEST \
       --sse-specification Enabled=true
+    
+    # Wait for table to be active before applying resource policy
+    echo "Waiting for DynamoDB table to become active..."
+    aws dynamodb wait table-exists --table-name "$COMMON_DYNAMODB_TABLE"
   fi
+  
+  # Apply DynamoDB resource policy for cross-account access
+  echo "Setting up DynamoDB resource policy for cross-account access..."
+  
+  # Build list of account ARNs for DynamoDB access (similar to S3 but for DynamoDB)
+  DYNAMODB_ACCOUNT_ARNS="\"arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:root\""
+  
+  # Add environment accounts
+  for env in $(jq -r 'keys[]' "$ACCOUNTS_FILE"); do
+    if [ "$env" != "shared_services" ]; then
+      account_id=$(jq -r ".${env}.account_id" "$ACCOUNTS_FILE")
+      if [ "$account_id" != "null" ] && [ "$account_id" != "REPLACE_WITH_PRODUCTION_ACCOUNT_ID" ] && [ "$account_id" != "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID" ]; then
+        DYNAMODB_ACCOUNT_ARNS="${DYNAMODB_ACCOUNT_ARNS},\"arn:aws:iam::${account_id}:role/OrganizationAccountAccessRole\""
+        DYNAMODB_ACCOUNT_ARNS="${DYNAMODB_ACCOUNT_ARNS},\"arn:aws:iam::${account_id}:root\""
+        echo "  - Added DynamoDB access for $env account: $account_id"
+      fi
+    fi
+  done
+  
+  # Add current user/account for administrative access
+  CURRENT_USER_ARN=$(aws sts get-caller-identity --query Arn --output text)
+  CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+  DYNAMODB_ACCOUNT_ARNS="${DYNAMODB_ACCOUNT_ARNS},\"${CURRENT_USER_ARN}\""
+  DYNAMODB_ACCOUNT_ARNS="${DYNAMODB_ACCOUNT_ARNS},\"arn:aws:iam::${CURRENT_ACCOUNT_ID}:root\""
+  
+  # Apply DynamoDB resource policy
+  aws dynamodb put-resource-policy \
+    --resource-arn "arn:aws:dynamodb:us-east-1:${SHARED_SERVICES_ACCOUNT_ID}:table/${COMMON_DYNAMODB_TABLE}" \
+    --policy "{
+      \"Version\": \"2012-10-17\",
+      \"Statement\": [
+        {
+          \"Sid\": \"AllowCrossAccountDynamoDBAccess\",
+          \"Effect\": \"Allow\",
+          \"Principal\": {
+            \"AWS\": [${DYNAMODB_ACCOUNT_ARNS}]
+          },
+          \"Action\": [
+            \"dynamodb:GetItem\",
+            \"dynamodb:PutItem\",
+            \"dynamodb:DeleteItem\",
+            \"dynamodb:DescribeTable\"
+          ],
+          \"Resource\": \"arn:aws:dynamodb:us-east-1:${SHARED_SERVICES_ACCOUNT_ID}:table/${COMMON_DYNAMODB_TABLE}\"
+        }
+      ]
+    }" 2>/dev/null || {
+    echo "⚠️ DynamoDB resource policy not supported in this region or account"
+    echo "💡 Alternative: Ensure OrganizationAccountAccessRole in environment accounts has DynamoDB permissions"
+    echo "   Required permissions: dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:DescribeTable"
+    echo "   Resource: arn:aws:dynamodb:us-east-1:${SHARED_SERVICES_ACCOUNT_ID}:table/${COMMON_DYNAMODB_TABLE}"
+  }
   
   echo "✅ Common backend resources setup completed"
 }
