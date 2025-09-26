@@ -214,6 +214,11 @@ jobs:
           echo "  - Added access for current user: $CURRENT_USER_ARN"
           echo "  - Added access for current account: $CURRENT_ACCOUNT_ID"
           
+          # Add master account (345918514280) for terraform init access
+          MASTER_ACCOUNT_ID="345918514280"
+          ACCOUNT_ARNS="${ACCOUNT_ARNS},\"arn:aws:iam::${MASTER_ACCOUNT_ID}:root\""
+          echo "  - Added access for master account: $MASTER_ACCOUNT_ID"
+          
           # Add environment accounts from config
           for env in $(jq -r 'keys[]' config/aws-accounts.json); do
             if [ "$env" != "shared_services" ]; then
