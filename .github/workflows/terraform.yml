@@ -266,6 +266,10 @@ jobs:
           # Build list of account ARNs for DynamoDB access (reuse the same list)
           DYNAMODB_ACCOUNT_ARNS="${ACCOUNT_ARNS}"
           
+          # Ensure master account is included for DynamoDB access
+          MASTER_ACCOUNT_ID="345918514280"
+          DYNAMODB_ACCOUNT_ARNS="${DYNAMODB_ACCOUNT_ARNS},\"arn:aws:iam::${MASTER_ACCOUNT_ID}:root\""
+          
           # Apply DynamoDB resource policy
           aws dynamodb put-resource-policy \
             --resource-arn "arn:aws:dynamodb:us-east-1:${SHARED_SERVICES_ACCOUNT_ID}:table/${COMMON_DYNAMODB_TABLE}" \
@@ -547,6 +551,11 @@ jobs:
             echo "Error: tfvars file not found: tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
             exit 1
           fi
+          
+          # Use master account credentials for state lock access
+          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
           
           terraform plan -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }} -out=tfplan
           
