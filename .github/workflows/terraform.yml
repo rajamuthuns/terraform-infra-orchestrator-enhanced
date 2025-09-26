@@ -154,10 +154,6 @@ jobs:
           else
             echo "❌ Failed to assume role in shared services account"
             echo "Error: $SHARED_CREDENTIALS"
-            echo "Please ensure:"
-            echo "1. The shared services account ID is correct in config/aws-accounts.json"
-            echo "2. OrganizationAccountAccessRole exists in the shared services account"
-            echo "3. Current credentials have permission to assume the role"
             exit 1
           fi
           
@@ -181,12 +177,12 @@ jobs:
             echo "✅ S3 bucket created and configured"
           fi
           
-          # Create common DynamoDB table if it doesn't exist
-          echo "Checking DynamoDB table: $COMMON_DYNAMODB_TABLE"
+          # Create common DynamoDB table in shared services account
+          echo "Checking DynamoDB table: $COMMON_DYNAMODB_TABLE in shared services account"
           if aws dynamodb describe-table --table-name "$COMMON_DYNAMODB_TABLE" 2>/dev/null; then
             echo "✅ DynamoDB table $COMMON_DYNAMODB_TABLE already exists"
           else
-            echo "Creating DynamoDB table: $COMMON_DYNAMODB_TABLE"
+            echo "Creating DynamoDB table: $COMMON_DYNAMODB_TABLE in shared services account"
             aws dynamodb create-table \
               --table-name "$COMMON_DYNAMODB_TABLE" \
               --attribute-definitions AttributeName=LockID,AttributeType=S \
@@ -197,7 +193,7 @@ jobs:
             # Wait for table to be active
             echo "Waiting for DynamoDB table to become active..."
             aws dynamodb wait table-exists --table-name "$COMMON_DYNAMODB_TABLE"
-            echo "✅ DynamoDB table created and active"
+            echo "✅ DynamoDB table created and active in shared services account"
           fi
           
           # Update bucket policy for cross-account access from environment accounts
@@ -266,10 +262,6 @@ jobs:
           # Build list of account ARNs for DynamoDB access (reuse the same list)
           DYNAMODB_ACCOUNT_ARNS="${ACCOUNT_ARNS}"
           
-          # Ensure master account is included for DynamoDB access
-          MASTER_ACCOUNT_ID="345918514280"
-          DYNAMODB_ACCOUNT_ARNS="${DYNAMODB_ACCOUNT_ARNS},\"arn:aws:iam::${MASTER_ACCOUNT_ID}:root\""
-          
           # Apply DynamoDB resource policy
           aws dynamodb put-resource-policy \
             --resource-arn "arn:aws:dynamodb:us-east-1:${SHARED_SERVICES_ACCOUNT_ID}:table/${COMMON_DYNAMODB_TABLE}" \
@@ -294,8 +286,6 @@ jobs:
             }" 2>/dev/null && echo "✅ DynamoDB resource policy configured" || {
             echo "⚠️ DynamoDB resource policy not supported in this region or account"
             echo "💡 Alternative: Ensure OrganizationAccountAccessRole in environment accounts has DynamoDB permissions"
-            echo "   Required permissions: dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:DescribeTable"
-            echo "   Resource: arn:aws:dynamodb:us-east-1:${SHARED_SERVICES_ACCOUNT_ID}:table/${COMMON_DYNAMODB_TABLE}"
           }
           
           # Create common backend configuration file (same for all environments)
@@ -518,33 +508,7 @@ jobs:
           echo "✅ Common backend configuration looks good:"
           cat "$BACKEND_FILE"
           echo "🏢 Environment isolation will be handled by workspace: ${{ needs.determine-environment.outputs.environment }}"
-      - name: Terraform Init with Master Account
-        run: |
-          # Use master account credentials from GitHub secrets for backend access
-          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
-          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
-          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
-          
-          echo "🔧 Initializing Terraform with master account credentials..."
-          echo "📋 Backend account: $(aws sts get-caller-identity --query Account --output text)"
-          
-          # Initialize Terraform with shared services backend
-          terraform init -backend-config=shared/backend-common.hcl
-        env:
-          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
-          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
-
-      - name: Terraform Workspace
-        run: |
-          echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
-          if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
-            echo "Workspace '${{ needs.determine-environment.outputs.environment }}' already exists, selecting it"
-            terraform workspace select ${{ needs.determine-environment.outputs.environment }}
-          else
-            echo "Creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
-            terraform workspace new ${{ needs.determine-environment.outputs.environment }}
-          fi
-      - name: Terraform Plan
+      - name: Terraform Init and Plan
         id: plan
         run: |
           if [ ! -f tfvars/${{ needs.determine-environment.outputs.tfvars-file }} ]; then
@@ -552,17 +516,75 @@ jobs:
             exit 1
           fi
           
-          # Use master account credentials for state lock access
+          # Get shared services account from config
+          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          
+          # Step 1: Use master account credentials to assume role in shared services for backend
           export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
           export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
           export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
           
-          terraform plan -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }} -out=tfplan
+          echo "🔧 Assuming role in shared services account for backend access..."
+          SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
           
-          terraform show -no-color tfplan > plan-output.txt
-          echo "## Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Tfvars File:** ${{ needs.determine-environment.outputs.tfvars-file }}" >> $GITHUB_STEP_SUMMARY
+          if SHARED_CREDENTIALS=$(aws sts assume-role \
+            --role-arn "$SHARED_SERVICES_ROLE_ARN" \
+            --role-session-name "terraform-plan-${{ github.run_id }}" \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text 2>&1); then
+            
+            export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
+            export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
+            export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
+            
+            echo "✅ Backend access ready from shared services account"
+            
+            # Initialize Terraform with shared services backend
+            terraform init -backend-config=shared/backend-common.hcl
+            
+            # Set up workspace
+            if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
+              terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+            else
+              terraform workspace new ${{ needs.determine-environment.outputs.environment }}
+            fi
+            
+            # Step 2: Switch to target account for planning
+            TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
+            TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
+            
+            if [ -n "$TARGET_ACCOUNT_ID" ]; then
+              echo "🔧 Assuming role in target account for planning: $TARGET_ACCOUNT_ID"
+              TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+              
+              if TARGET_CREDENTIALS=$(aws sts assume-role \
+                --role-arn "$TARGET_ROLE_ARN" \
+                --role-session-name "terraform-plan-target-${{ github.run_id }}" \
+                --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                --output text 2>&1); then
+                
+                export AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)
+                export AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)
+                export AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)
+                
+                echo "✅ Ready to plan in target account: $TARGET_ACCOUNT_ID"
+              else
+                echo "❌ Failed to assume role in target account: $TARGET_CREDENTIALS"
+                exit 1
+              fi
+            fi
+            
+            # Run terraform plan
+            terraform plan -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }} -out=tfplan
+            
+            terraform show -no-color tfplan > plan-output.txt
+            echo "## Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
+            echo "**Environment:** ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Tfvars File:** ${{ needs.determine-environment.outputs.tfvars-file }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Failed to assume role in shared services account: $SHARED_CREDENTIALS"
+            exit 1
+          fi
       - name: Upload plan artifacts
         uses: actions/upload-artifact@v4
         with:
