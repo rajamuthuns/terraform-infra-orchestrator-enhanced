@@ -422,77 +422,7 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_DEFAULT_REGION }}
 
-      - name: Get target account info from tfvars
-        run: |
-          TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
-          echo "📋 Reading account info from: $TFVARS_FILE"
-          
-          if [ ! -f "$TFVARS_FILE" ]; then
-            echo "❌ Tfvars file not found: $TFVARS_FILE"
-            exit 1
-          fi
-          
-          # Extract account_id from tfvars file
-          TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
-          
-          if [ -z "$TARGET_ACCOUNT_ID" ]; then
-            echo "⚠️ No account_id found in $TFVARS_FILE, using current account"
-            TARGET_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          fi
-          
-          echo "📋 Target Account ID: $TARGET_ACCOUNT_ID"
-          echo "📋 Environment: ${{ needs.determine-environment.outputs.environment }}"
-          
-          # For common backend approach, we don't need to assume roles
-          # All environments use the same backend in the current account
-          echo "✅ Using common backend approach - no role assumption needed"
-      - name: Assume target environment role for deployment
-        run: |
-          TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
-          echo "📋 Reading target account info from: $TFVARS_FILE"
-          
-          # Extract account_id from tfvars file
-          TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
-          
-          if [ -z "$TARGET_ACCOUNT_ID" ]; then
-            echo "⚠️ No account_id found in $TFVARS_FILE, using current account"
-            TARGET_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          fi
-          
-          echo "📋 Target Account ID: $TARGET_ACCOUNT_ID"
-          echo "📋 Environment: ${{ needs.determine-environment.outputs.environment }}"
-          
-          # Get current account to check if we need to assume a role
-          CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          
-          if [ "$TARGET_ACCOUNT_ID" != "$CURRENT_ACCOUNT_ID" ]; then
-            echo "🔐 Assuming role in target environment account: $TARGET_ACCOUNT_ID"
-            
-            TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
-            
-            if TARGET_CREDENTIALS=$(aws sts assume-role \
-              --role-arn "$TARGET_ROLE_ARN" \
-              --role-session-name "terraform-deployment-${{ github.run_id }}" \
-              --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-              --output text 2>&1); then
-              
-              # Store target account credentials for deployment operations
-              echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
-              echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
-              echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
-              
-              echo "✅ Successfully assumed role in target environment account"
-            else
-              echo "❌ Failed to assume role in target environment account: $TARGET_CREDENTIALS"
-              echo "Please ensure:"
-              echo "1. The target account ID is correct in $TFVARS_FILE"
-              echo "2. OrganizationAccountAccessRole exists in the target account"
-              echo "3. Current credentials have permission to assume the role"
-              exit 1
-            fi
-          else
-            echo "✅ Already in target account, no role assumption needed"
-          fi
+
 
       - name: Check backend configuration
         run: |
@@ -516,82 +446,31 @@ jobs:
             exit 1
           fi
           
-          # Get shared services account from config
-          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
-          TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
-          TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
-          
-          # Use master account credentials to assume role in shared services for backend
+          # Use master account credentials directly
           export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
           export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
           export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
           
-          echo "🔧 Assuming role in shared services account for backend access..."
-          SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          echo "🔧 Using master account credentials for all operations"
+          echo "📋 Master Account: $(aws sts get-caller-identity --query Account --output text)"
           
-          if SHARED_CREDENTIALS=$(aws sts assume-role \
-            --role-arn "$SHARED_SERVICES_ROLE_ARN" \
-            --role-session-name "terraform-plan-${{ github.run_id }}" \
-            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-            --output text 2>&1); then
-            
-            export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
-            export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
-            export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
-            
-            echo "✅ Backend access ready from shared services account"
-            
-            # Create dynamic backend config with assume_role for target account
-            if [ -n "$TARGET_ACCOUNT_ID" ] && [ "$TARGET_ACCOUNT_ID" != "$SHARED_SERVICES_ACCOUNT_ID" ]; then
-              echo "🔧 Creating backend config with assume_role for target account: $TARGET_ACCOUNT_ID"
-              cat > "backend-dynamic.hcl" << EOF
-          bucket         = "terraform-state-central-multi-env"
-          key            = "terraform.tfstate"
-          region         = "us-east-1"
-          dynamodb_table = "terraform-state-locks-common"
-          encrypt        = true
-          workspace_key_prefix = "environments"
+          # Initialize Terraform with shared services backend
+          terraform init -backend-config=shared/backend-common.hcl
           
-          assume_role = {
-            role_arn = "arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
-            session_name = "terraform-plan-${{ github.run_id }}"
-          }
-          
-          skip_credentials_validation = false
-          skip_metadata_api_check = false
-          skip_region_validation = false
-          use_path_style = false
-          max_retries = 5
-          EOF
-              BACKEND_CONFIG="backend-dynamic.hcl"
-            else
-              echo "🔧 Using standard backend config (same account deployment)"
-              BACKEND_CONFIG="shared/backend-common.hcl"
-            fi
-            
-            # Initialize Terraform with appropriate backend config
-            terraform init -backend-config="$BACKEND_CONFIG"
-            
-            # Set up workspace
-            if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
-              terraform workspace select ${{ needs.determine-environment.outputs.environment }}
-            else
-              terraform workspace new ${{ needs.determine-environment.outputs.environment }}
-            fi
-            
-            # Run terraform plan (backend credentials handle both backend and target account access)
-            terraform plan -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }} -out=tfplan
-            
-            terraform show -no-color tfplan > plan-output.txt
-            echo "## Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
-            echo "**Environment:** ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Tfvars File:** ${{ needs.determine-environment.outputs.tfvars-file }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Backend Account:** $SHARED_SERVICES_ACCOUNT_ID" >> $GITHUB_STEP_SUMMARY
-            echo "**Target Account:** $TARGET_ACCOUNT_ID" >> $GITHUB_STEP_SUMMARY
+          # Set up workspace
+          if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
+            terraform workspace select ${{ needs.determine-environment.outputs.environment }}
           else
-            echo "❌ Failed to assume role in shared services account: $SHARED_CREDENTIALS"
-            exit 1
+            terraform workspace new ${{ needs.determine-environment.outputs.environment }}
           fi
+          
+          # Run terraform plan
+          terraform plan -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }} -out=tfplan
+          
+          terraform show -no-color tfplan > plan-output.txt
+          echo "## Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tfvars File:** ${{ needs.determine-environment.outputs.tfvars-file }}" >> $GITHUB_STEP_SUMMARY
       - name: Upload plan artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -667,53 +546,7 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_DEFAULT_REGION }}
 
-      - name: Assume target environment role for deployment
-        run: |
-          TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
-          echo "📋 Reading target account info from: $TFVARS_FILE"
-          
-          # Extract account_id from tfvars file
-          TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
-          
-          if [ -z "$TARGET_ACCOUNT_ID" ]; then
-            echo "⚠️ No account_id found in $TFVARS_FILE, using current account"
-            TARGET_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          fi
-          
-          echo "📋 Target Account ID: $TARGET_ACCOUNT_ID"
-          echo "📋 Environment: ${{ needs.determine-environment.outputs.environment }}"
-          
-          # Get current account to check if we need to assume a role
-          CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          
-          if [ "$TARGET_ACCOUNT_ID" != "$CURRENT_ACCOUNT_ID" ]; then
-            echo "🔐 Assuming role in target environment account: $TARGET_ACCOUNT_ID"
-            
-            TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
-            
-            if TARGET_CREDENTIALS=$(aws sts assume-role \
-              --role-arn "$TARGET_ROLE_ARN" \
-              --role-session-name "terraform-deployment-${{ github.run_id }}" \
-              --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-              --output text 2>&1); then
-              
-              # Store target account credentials for deployment operations
-              echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
-              echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
-              echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
-              
-              echo "✅ Successfully assumed role in target environment account"
-            else
-              echo "❌ Failed to assume role in target environment account: $TARGET_CREDENTIALS"
-              echo "Please ensure:"
-              echo "1. The target account ID is correct in $TFVARS_FILE"
-              echo "2. OrganizationAccountAccessRole exists in the target account"
-              echo "3. Current credentials have permission to assume the role"
-              exit 1
-            fi
-          else
-            echo "✅ Already in target account, no role assumption needed"
-          fi
+
       - name: Check backend configuration
         run: |
           BACKEND_FILE="shared/backend-common.hcl"
@@ -727,71 +560,18 @@ jobs:
           echo "✅ Common backend configuration looks good:"
           cat "$BACKEND_FILE"
           echo "🏢 Environment isolation will be handled by workspace: ${{ needs.determine-environment.outputs.environment }}"
-      - name: Terraform Init with Backend Configuration
+      - name: Terraform Init
         run: |
-          # Get shared services account from config
-          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
-          TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
-          TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
-          
-          # Use master account credentials to assume role in shared services for backend
+          # Use master account credentials directly
           export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
           export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
           export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
           
-          echo "🔧 Assuming role in shared services account for backend access..."
-          SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          echo "🔧 Using master account credentials for all operations"
+          echo "📋 Master Account: $(aws sts get-caller-identity --query Account --output text)"
           
-          if SHARED_CREDENTIALS=$(aws sts assume-role \
-            --role-arn "$SHARED_SERVICES_ROLE_ARN" \
-            --role-session-name "terraform-apply-${{ github.run_id }}" \
-            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-            --output text 2>&1); then
-            
-            export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
-            export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
-            export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
-            
-            echo "✅ Backend access ready from shared services account"
-            
-            # Create dynamic backend config with assume_role for target account
-            if [ -n "$TARGET_ACCOUNT_ID" ] && [ "$TARGET_ACCOUNT_ID" != "$SHARED_SERVICES_ACCOUNT_ID" ]; then
-              echo "🔧 Creating backend config with assume_role for target account: $TARGET_ACCOUNT_ID"
-              cat > "backend-dynamic.hcl" << EOF
-          bucket         = "terraform-state-central-multi-env"
-          key            = "terraform.tfstate"
-          region         = "us-east-1"
-          dynamodb_table = "terraform-state-locks-common"
-          encrypt        = true
-          workspace_key_prefix = "environments"
-          
-          assume_role {
-            role_arn = "arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
-            session_name = "terraform-apply-${{ github.run_id }}"
-          }
-          
-          skip_credentials_validation = false
-          skip_metadata_api_check = false
-          skip_region_validation = false
-          use_path_style = false
-          max_retries = 5
-          EOF
-              BACKEND_CONFIG="backend-dynamic.hcl"
-            else
-              echo "🔧 Using standard backend config (same account deployment)"
-              BACKEND_CONFIG="shared/backend-common.hcl"
-            fi
-            
-            # Initialize Terraform with appropriate backend config
-            terraform init -backend-config="$BACKEND_CONFIG"
-            
-            echo "✅ Terraform initialized successfully"
-            echo "📋 Backend Account: $SHARED_SERVICES_ACCOUNT_ID"
-            echo "📋 Target Account: $TARGET_ACCOUNT_ID"
-          else
-            echo "❌ Failed to assume role in shared services account: $SHARED_CREDENTIALS"
-            exit 1
-          fi
+          # Initialize Terraform with shared services backend
+          terraform init -backend-config=shared/backend-common.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
