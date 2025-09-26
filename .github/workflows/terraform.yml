@@ -408,42 +408,52 @@ jobs:
           # For common backend approach, we don't need to assume roles
           # All environments use the same backend in the current account
           echo "✅ Using common backend approach - no role assumption needed"
-      - name: Assume shared services role for backend access
+      - name: Assume target environment role for deployment
         run: |
-          # Get shared services account ID from config
-          if [ -f "config/aws-accounts.json" ]; then
-            SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
+          echo "📋 Reading target account info from: $TFVARS_FILE"
+          
+          # Extract account_id from tfvars file
+          TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
+          
+          if [ -z "$TARGET_ACCOUNT_ID" ]; then
+            echo "⚠️ No account_id found in $TFVARS_FILE, using current account"
+            TARGET_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          fi
+          
+          echo "📋 Target Account ID: $TARGET_ACCOUNT_ID"
+          echo "📋 Environment: ${{ needs.determine-environment.outputs.environment }}"
+          
+          # Get current account to check if we need to assume a role
+          CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          
+          if [ "$TARGET_ACCOUNT_ID" != "$CURRENT_ACCOUNT_ID" ]; then
+            echo "🔐 Assuming role in target environment account: $TARGET_ACCOUNT_ID"
             
-            if [ "$SHARED_SERVICES_ACCOUNT_ID" != "null" ] && [ "$SHARED_SERVICES_ACCOUNT_ID" != "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID" ]; then
-              echo "🔐 Assuming role in shared services account for backend access: $SHARED_SERVICES_ACCOUNT_ID"
+            TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+            
+            if TARGET_CREDENTIALS=$(aws sts assume-role \
+              --role-arn "$TARGET_ROLE_ARN" \
+              --role-session-name "terraform-deployment-${{ github.run_id }}" \
+              --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+              --output text 2>&1); then
               
-              SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+              # Store target account credentials for deployment operations
+              echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
+              echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
+              echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
               
-              if SHARED_CREDENTIALS=$(aws sts assume-role \
-                --role-arn "$SHARED_SERVICES_ROLE_ARN" \
-                --role-session-name "backend-access-${{ github.run_id }}" \
-                --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-                --output text 2>&1); then
-                
-                export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
-                export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
-                export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
-                
-                # Store credentials for subsequent steps
-                echo "AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
-                echo "AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
-                echo "AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
-                
-                echo "✅ Successfully assumed role in shared services account for backend access"
-              else
-                echo "⚠️ Failed to assume role in shared services account: $SHARED_CREDENTIALS"
-                echo "Continuing with current credentials (organization master account)"
-              fi
+              echo "✅ Successfully assumed role in target environment account"
             else
-              echo "⚠️ Shared services account not configured, using current credentials"
+              echo "❌ Failed to assume role in target environment account: $TARGET_CREDENTIALS"
+              echo "Please ensure:"
+              echo "1. The target account ID is correct in $TFVARS_FILE"
+              echo "2. OrganizationAccountAccessRole exists in the target account"
+              echo "3. Current credentials have permission to assume the role"
+              exit 1
             fi
           else
-            echo "⚠️ Config file not found, using current credentials"
+            echo "✅ Already in target account, no role assumption needed"
           fi
 
       - name: Check backend configuration
@@ -462,6 +472,14 @@ jobs:
           echo "🏢 Environment isolation will be handled by workspace: ${{ needs.determine-environment.outputs.environment }}"
       - name: Terraform Init
         run: |
+          # Terraform init needs to access the backend in shared services account
+          # We're currently in the target environment account with OrganizationAccountAccessRole
+          # This role has access to the shared services backend via bucket policy
+          
+          echo "🔧 Initializing Terraform with shared services backend..."
+          echo "📋 Current account: $(aws sts get-caller-identity --query Account --output text)"
+          echo "📋 Current role: $(aws sts get-caller-identity --query Arn --output text)"
+          
           terraform init -backend-config=shared/backend-common.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -566,10 +584,10 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_DEFAULT_REGION }}
 
-      - name: Assume target account role
+      - name: Assume target environment role for deployment
         run: |
           TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
-          echo "📋 Reading account info from: $TFVARS_FILE"
+          echo "📋 Reading target account info from: $TFVARS_FILE"
           
           # Extract account_id from tfvars file
           TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
@@ -581,7 +599,38 @@ jobs:
           
           echo "📋 Target Account ID: $TARGET_ACCOUNT_ID"
           echo "📋 Environment: ${{ needs.determine-environment.outputs.environment }}"
-          echo "✅ Using common backend approach - no role assumption needed"
+          
+          # Get current account to check if we need to assume a role
+          CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          
+          if [ "$TARGET_ACCOUNT_ID" != "$CURRENT_ACCOUNT_ID" ]; then
+            echo "🔐 Assuming role in target environment account: $TARGET_ACCOUNT_ID"
+            
+            TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+            
+            if TARGET_CREDENTIALS=$(aws sts assume-role \
+              --role-arn "$TARGET_ROLE_ARN" \
+              --role-session-name "terraform-deployment-${{ github.run_id }}" \
+              --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+              --output text 2>&1); then
+              
+              # Store target account credentials for deployment operations
+              echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
+              echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
+              echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+              
+              echo "✅ Successfully assumed role in target environment account"
+            else
+              echo "❌ Failed to assume role in target environment account: $TARGET_CREDENTIALS"
+              echo "Please ensure:"
+              echo "1. The target account ID is correct in $TFVARS_FILE"
+              echo "2. OrganizationAccountAccessRole exists in the target account"
+              echo "3. Current credentials have permission to assume the role"
+              exit 1
+            fi
+          else
+            echo "✅ Already in target account, no role assumption needed"
+          fi
       - name: Check backend configuration
         run: |
           BACKEND_FILE="shared/backend-common.hcl"
