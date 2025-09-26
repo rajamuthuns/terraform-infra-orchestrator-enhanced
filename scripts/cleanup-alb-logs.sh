@@ -68,42 +68,20 @@ find_alb_log_buckets() {
     
     print_color $BLUE "🔍 Finding ALB access log buckets for environment: $env"
     
-    # Common ALB log bucket naming patterns
-    local bucket_patterns=(
-        "*alb*access*log*${env}*"
-        "*${env}*alb*access*log*"
-        "*alb*log*${env}*"
-        "*${env}*alb*log*"
-        "*access*log*${env}*"
-        "*${env}*access*log*"
-    )
-    
     local found_buckets=()
     
-    # Search for buckets matching ALB log patterns
-    for pattern in "${bucket_patterns[@]}"; do
-        local buckets=$(aws s3api list-buckets --query "Buckets[?contains(Name, '${env}') && (contains(Name, 'alb') || contains(Name, 'access') || contains(Name, 'log'))].Name" --output text 2>/dev/null || true)
-        
-        if [ -n "$buckets" ]; then
-            for bucket in $buckets; do
-                # Check if bucket is used for ALB access logs
-                local bucket_policy=$(aws s3api get-bucket-policy --bucket "$bucket" --query 'Policy' --output text 2>/dev/null || echo "")
-                local bucket_logging=$(aws s3api get-bucket-logging --bucket "$bucket" 2>/dev/null || echo "")
-                
-                # Check if bucket has ALB-related tags or policies
-                if [[ "$bucket_policy" == *"elasticloadbalancing"* ]] || [[ "$bucket" == *"alb"* ]] || [[ "$bucket" == *"access-log"* ]]; then
-                    found_buckets+=("$bucket")
-                fi
-            done
-        fi
-    done
+    # Get all buckets and filter for ALB access log patterns
+    local all_buckets=$(aws s3api list-buckets --query "Buckets[].Name" --output text 2>/dev/null || true)
     
-    # Also check for buckets created by Terraform ALB module
-    local tf_alb_buckets=$(aws s3api list-buckets --query "Buckets[?contains(Name, '${env}') && contains(Name, 'alb')].Name" --output text 2>/dev/null || true)
-    if [ -n "$tf_alb_buckets" ]; then
-        for bucket in $tf_alb_buckets; do
-            if [[ ! " ${found_buckets[@]} " =~ " ${bucket} " ]]; then
+    if [ -n "$all_buckets" ]; then
+        for bucket in $all_buckets; do
+            # Check if bucket matches ALB access log patterns for this environment
+            if [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"access"* ]] && [[ "$bucket" == *"log"* ]]; then
                 found_buckets+=("$bucket")
+                print_color $YELLOW "  Found: $bucket"
+            elif [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"log"* ]]; then
+                found_buckets+=("$bucket")
+                print_color $YELLOW "  Found: $bucket"
             fi
         done
     fi
