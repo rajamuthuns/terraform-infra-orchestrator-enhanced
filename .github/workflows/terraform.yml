@@ -552,7 +552,7 @@ jobs:
           encrypt        = true
           workspace_key_prefix = "environments"
           
-          assume_role {
+          assume_role = {
             role_arn = "arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
             session_name = "terraform-plan-${{ github.run_id }}"
           }
