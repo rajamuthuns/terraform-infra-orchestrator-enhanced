@@ -73,39 +73,49 @@ validate_prerequisites() {
   echo "✅ Prerequisites validated"
 }
 
-# Store original credentials to restore between environments
-ORIGINAL_AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
-ORIGINAL_AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
-ORIGINAL_AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN"
+# Note: This script now uses a common backend approach
+# No need to store original credentials since we don't switch accounts
 
 # Function to setup common backend resources (run once)
 setup_common_backend() {
   echo "🔧 Setting up common backend resources in shared services account"
   
-  # Get shared services account ID
+  # Get shared services account ID from config (controlled by platform team)
   SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' "$ACCOUNTS_FILE")
   
   if [ "$SHARED_SERVICES_ACCOUNT_ID" = "null" ] || [ "$SHARED_SERVICES_ACCOUNT_ID" = "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID" ]; then
     echo "❌ Shared services account ID not configured in $ACCOUNTS_FILE"
-    echo "Please update the shared_services.account_id field with your actual account ID"
+    echo "Please update the shared_services.account_id field with the actual shared services account ID"
+    echo "This ensures backend resources are created in the correct account controlled by the platform team"
     exit 1
   fi
   
-  echo "📋 Using shared services account: $SHARED_SERVICES_ACCOUNT_ID"
+  echo "📋 Shared Services Account (for backend): $SHARED_SERVICES_ACCOUNT_ID"
+  echo "🏛️ This account is controlled by the platform/orchestrator team"
   
   # Assume role in shared services account for backend resources
   SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
   
   echo "🔐 Assuming role in shared services account: $SHARED_SERVICES_ROLE_ARN"
-  SHARED_CREDENTIALS=$(aws sts assume-role \
+  if SHARED_CREDENTIALS=$(aws sts assume-role \
     --role-arn "$SHARED_SERVICES_ROLE_ARN" \
     --role-session-name "backend-setup-shared-services" \
     --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-    --output text)
-  
-  export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
-  export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
-  export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
+    --output text 2>&1); then
+    
+    export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
+    export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
+    export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
+    echo "✅ Successfully assumed role in shared services account"
+  else
+    echo "❌ Failed to assume role in shared services account"
+    echo "Error: $SHARED_CREDENTIALS"
+    echo "Please ensure:"
+    echo "1. The shared services account ID is correct in $ACCOUNTS_FILE"
+    echo "2. OrganizationAccountAccessRole exists in the shared services account"
+    echo "3. Current credentials have permission to assume the role"
+    exit 1
+  fi
   
   # Create common S3 bucket (in management account)
   echo "Creating common S3 bucket: $COMMON_BUCKET_NAME"

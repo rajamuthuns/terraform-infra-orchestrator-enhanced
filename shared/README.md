@@ -6,20 +6,39 @@ This directory contains the common Terraform backend configuration used by all e
 
 - **`backend-common.hcl`** - Common backend configuration for all environments
 
+## Governance Model
+
+### **Platform Team Control**
+- **Backend Location**: Controlled via `config/aws-accounts.json` (platform team manages this)
+- **Shared Services Account**: Backend resources created in dedicated shared services account
+- **Application Team Isolation**: App teams cannot accidentally create backend resources in wrong accounts
+- **Centralized Management**: All backend resources managed by orchestrator/platform team
+
+### **Application Team Responsibility**
+- **Deployment Targets**: App teams specify target accounts in their `tfvars` files
+- **Environment Configuration**: App teams manage environment-specific settings
+- **No Backend Control**: App teams cannot control where backend resources are created
+
 ## Architecture Overview
 
 ```
-Single S3 Bucket: terraform-state-central-multi-env
-├── environments/
-│   ├── dev/
-│   │   └── terraform.tfstate
-│   ├── staging/
-│   │   └── terraform.tfstate
-│   └── production/
-│       └── terraform.tfstate
+Shared Services Account (Centralized Backend)
+├── S3 Bucket: terraform-state-central-multi-env
+│   ├── environments/
+│   │   ├── dev/
+│   │   │   └── terraform.tfstate
+│   │   ├── staging/
+│   │   │   └── terraform.tfstate
+│   │   └── production/
+│   │       └── terraform.tfstate
+│
+└── DynamoDB Table: terraform-state-locks-common
+    └── Handles locking for all environments
 
-Single DynamoDB Table: terraform-state-locks-common
-└── Handles locking for all environments
+Environment Accounts (Cross-Account Access)
+├── Dev Account → Accesses shared backend
+├── Staging Account → Accesses shared backend  
+└── Production Account → Accesses shared backend
 ```
 
 ## Automatic Setup
