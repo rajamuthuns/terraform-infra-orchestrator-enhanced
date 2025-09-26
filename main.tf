@@ -15,6 +15,17 @@ terraform {
 provider "aws" {
   region = var.aws_region
 
+  # Cross-account assume role for deployment
+  # Backend operations stay in shared services account
+  # Resource operations assume role in target account
+  dynamic "assume_role" {
+    for_each = var.account_id != null && var.account_id != "" ? [1] : []
+    content {
+      role_arn     = "arn:aws:iam::${var.account_id}:role/OrganizationAccountAccessRole"
+      session_name = "terraform-deployment-${var.environment}"
+    }
+  }
+
   default_tags {
     tags = {
       Environment = var.environment
