@@ -509,47 +509,18 @@ jobs:
           echo "✅ Common backend configuration looks good:"
           cat "$BACKEND_FILE"
           echo "🏢 Environment isolation will be handled by workspace: ${{ needs.determine-environment.outputs.environment }}"
-      - name: Terraform Init
+      - name: Terraform Init with Master Account
         run: |
-          # Save current target account credentials
-          TARGET_AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
-          TARGET_AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
-          TARGET_AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN"
+          # Use master account credentials from GitHub secrets for backend access
+          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
           
-          # Get shared services account from config
-          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          echo "🔧 Initializing Terraform with master account credentials..."
+          echo "📋 Backend account: $(aws sts get-caller-identity --query Account --output text)"
           
-          # Assume role in shared services account for backend access
-          echo "🔧 Assuming role in shared services account for backend access..."
-          SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
-          
-          if SHARED_CREDENTIALS=$(aws sts assume-role \
-            --role-arn "$SHARED_SERVICES_ROLE_ARN" \
-            --role-session-name "terraform-init-${{ github.run_id }}" \
-            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-            --output text 2>&1); then
-            
-            export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
-            export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
-            export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
-            
-            echo "✅ Successfully assumed role in shared services account"
-            echo "📋 Backend account: $(aws sts get-caller-identity --query Account --output text)"
-            
-            # Initialize Terraform with shared services backend
-            terraform init -backend-config=shared/backend-common.hcl
-            
-            # Restore target account credentials for subsequent operations
-            export AWS_ACCESS_KEY_ID="$TARGET_AWS_ACCESS_KEY_ID"
-            export AWS_SECRET_ACCESS_KEY="$TARGET_AWS_SECRET_ACCESS_KEY"
-            export AWS_SESSION_TOKEN="$TARGET_AWS_SESSION_TOKEN"
-            
-            echo "✅ Restored target account credentials"
-            echo "📋 Target account: $(aws sts get-caller-identity --query Account --output text)"
-          else
-            echo "❌ Failed to assume role in shared services account: $SHARED_CREDENTIALS"
-            exit 1
-          fi
+          # Initialize Terraform with shared services backend
+          terraform init -backend-config=shared/backend-common.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -713,47 +684,18 @@ jobs:
           echo "✅ Common backend configuration looks good:"
           cat "$BACKEND_FILE"
           echo "🏢 Environment isolation will be handled by workspace: ${{ needs.determine-environment.outputs.environment }}"
-      - name: Terraform Init
+      - name: Terraform Init with Master Account
         run: |
-          # Save current target account credentials
-          TARGET_AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
-          TARGET_AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
-          TARGET_AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN"
+          # Use master account credentials from GitHub secrets for backend access
+          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
           
-          # Get shared services account from config
-          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          echo "🔧 Initializing Terraform with master account credentials..."
+          echo "📋 Backend account: $(aws sts get-caller-identity --query Account --output text)"
           
-          # Assume role in shared services account for backend access
-          echo "🔧 Assuming role in shared services account for backend access..."
-          SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
-          
-          if SHARED_CREDENTIALS=$(aws sts assume-role \
-            --role-arn "$SHARED_SERVICES_ROLE_ARN" \
-            --role-session-name "terraform-init-deploy-${{ github.run_id }}" \
-            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-            --output text 2>&1); then
-            
-            export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
-            export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
-            export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
-            
-            echo "✅ Successfully assumed role in shared services account"
-            echo "📋 Backend account: $(aws sts get-caller-identity --query Account --output text)"
-            
-            # Initialize Terraform with shared services backend
-            terraform init -backend-config=shared/backend-common.hcl
-            
-            # Restore target account credentials for subsequent operations
-            export AWS_ACCESS_KEY_ID="$TARGET_AWS_ACCESS_KEY_ID"
-            export AWS_SECRET_ACCESS_KEY="$TARGET_AWS_SECRET_ACCESS_KEY"
-            export AWS_SESSION_TOKEN="$TARGET_AWS_SESSION_TOKEN"
-            
-            echo "✅ Restored target account credentials"
-            echo "📋 Target account: $(aws sts get-caller-identity --query Account --output text)"
-          else
-            echo "❌ Failed to assume role in shared services account: $SHARED_CREDENTIALS"
-            exit 1
-          fi
+          # Initialize Terraform with shared services backend
+          terraform init -backend-config=shared/backend-common.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
