@@ -103,13 +103,21 @@ auto_detect_buckets() {
     print_color $BLUE "🔍 Auto-detecting ALB log buckets for environment: $env"
     
     # Get all buckets and filter for ALB access log patterns
-    local buckets=($(aws s3api list-buckets --query "Buckets[].Name" --output text | tr '\t' '\n' | grep -E ".*alb.*$env.*log.*|.*$env.*alb.*log.*" || true))
+    local buckets=()
     
-    # Also check for the specific buckets mentioned in your error
+    # Check for the specific bucket patterns that are causing issues
     local specific_buckets=(
         "windows-alb-$env-windows-alb-$env-alb-access-logs"
         "linux-alb-$env-linux-alb-$env-alb-access-logs"
     )
+    
+    # Also try broader patterns
+    local all_buckets=$(aws s3api list-buckets --query "Buckets[].Name" --output text | tr '\t' '\n')
+    while IFS= read -r bucket; do
+        if [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"access-logs"* ]]; then
+            buckets+=("$bucket")
+        fi
+    done <<< "$all_buckets"
     
     for bucket in "${specific_buckets[@]}"; do
         if aws s3api head-bucket --bucket "$bucket" 2>/dev/null; then
