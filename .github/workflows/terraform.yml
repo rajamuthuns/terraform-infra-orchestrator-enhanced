@@ -549,11 +549,16 @@ jobs:
               terraform workspace new ${{ needs.determine-environment.outputs.environment }}
             fi
             
-            # Step 2: Switch to target account for planning
+            # Step 2: Switch back to master account, then assume target account role directly
             TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
             TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
             
             if [ -n "$TARGET_ACCOUNT_ID" ]; then
+              echo "🔧 Switching back to master account for target role assumption..."
+              export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
+              export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+              export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
+              
               echo "🔧 Assuming role in target account for planning: $TARGET_ACCOUNT_ID"
               TARGET_ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
               
