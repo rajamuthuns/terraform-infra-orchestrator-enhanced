@@ -139,9 +139,10 @@ jobs:
           SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
           
           if [ "$SHARED_SERVICES_ACCOUNT_ID" = "null" ] || [ "$SHARED_SERVICES_ACCOUNT_ID" = "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID" ]; then
-            echo "❌ Shared services account ID not configured in config/aws-accounts.json"
-            echo "Please update the shared_services.account_id field with your actual account ID"
-            exit 1
+            echo "⚠️ Shared services account ID not configured, using current account as fallback"
+            echo "For production use, please update shared_services.account_id in config/aws-accounts.json"
+            SHARED_SERVICES_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            echo "Using current account: $SHARED_SERVICES_ACCOUNT_ID"
           fi
           
           echo "📋 Using shared services account: $SHARED_SERVICES_ACCOUNT_ID"
@@ -412,7 +413,14 @@ jobs:
 
       - name: Terraform Workspace
         run: |
-          terraform workspace select ${{ needs.determine-environment.outputs.environment }} || terraform workspace new ${{ needs.determine-environment.outputs.environment }}
+          echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
+          if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
+            echo "Workspace '${{ needs.determine-environment.outputs.environment }}' already exists, selecting it"
+            terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+          else
+            echo "Creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            terraform workspace new ${{ needs.determine-environment.outputs.environment }}
+          fi
       - name: Terraform Plan
         id: plan
         run: |
@@ -538,7 +546,14 @@ jobs:
 
       - name: Terraform Workspace
         run: |
-          terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+          echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
+          if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
+            echo "Workspace '${{ needs.determine-environment.outputs.environment }}' already exists, selecting it"
+            terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+          else
+            echo "Creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            terraform workspace new ${{ needs.determine-environment.outputs.environment }}
+          fi
       - name: Terraform Apply
         id: apply
         run: |
@@ -695,7 +710,14 @@ jobs:
 
       - name: Terraform Workspace
         run: |
-          terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+          echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
+          if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
+            echo "Workspace '${{ needs.determine-environment.outputs.environment }}' already exists, selecting it"
+            terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+          else
+            echo "Creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            terraform workspace new ${{ needs.determine-environment.outputs.environment }}
+          fi
       - name: Confirm Destroy Action
         run: |
           echo "🚨 DESTROY ACTION CONFIRMED"
@@ -791,7 +813,14 @@ jobs:
           terraform init -backend-config=shared/backend-common.hcl
           
           # Select workspace
-          terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+          echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
+          if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
+            echo "Workspace '${{ needs.determine-environment.outputs.environment }}' already exists, selecting it"
+            terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+          else
+            echo "Creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            terraform workspace new ${{ needs.determine-environment.outputs.environment }}
+          fi
           
           # Retry destroy
           if [ ! -f tfvars/${{ needs.determine-environment.outputs.tfvars-file }} ]; then
