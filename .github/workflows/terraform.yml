@@ -467,7 +467,7 @@ jobs:
           encrypt        = true
           workspace_key_prefix = "environments"
           
-          assume_role = {
+          assume_role {
             role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
             session_name = "terraform-backend-${{ github.run_id }}"
           }
@@ -608,7 +608,7 @@ jobs:
           encrypt        = true
           workspace_key_prefix = "environments"
           
-          assume_role = {
+          assume_role {
             role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
             session_name = "terraform-backend-${{ github.run_id }}"
           }
@@ -756,38 +756,43 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_DEFAULT_REGION }}
 
-      - name: Assume target account role
-        run: |
-          TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
-          echo "📋 Reading account info from: $TFVARS_FILE"
-          
-          # Extract account_id from tfvars file
-          TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
-          
-          if [ -z "$TARGET_ACCOUNT_ID" ]; then
-            echo "⚠️ No account_id found in $TFVARS_FILE, using current account"
-            TARGET_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          fi
-          
-          echo "📋 Target Account ID: $TARGET_ACCOUNT_ID"
-          echo "📋 Environment: ${{ needs.determine-environment.outputs.environment }}"
-          echo "✅ Using common backend approach - no role assumption needed"
-      - name: Check backend configuration
-        run: |
-          BACKEND_FILE="shared/backend-common.hcl"
-          if [ ! -f "$BACKEND_FILE" ]; then
-            echo "❌ Common backend configuration file not found: $BACKEND_FILE"
-            echo "Available backend files:"
-            ls -la shared/backend-*.hcl 2>/dev/null || echo "No backend files found"
-            exit 1
-          fi
-          
-          echo "✅ Common backend configuration looks good:"
-          cat "$BACKEND_FILE"
-          echo "🏢 Environment isolation will be handled by workspace: ${{ needs.determine-environment.outputs.environment }}"
       - name: Terraform Init
         run: |
-          terraform init -backend-config=shared/backend-common.hcl
+          # Get shared services account from config
+          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          
+          # Use master account credentials directly
+          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
+          
+          echo "🔧 Using master account credentials for destroy operations"
+          echo "📋 Master Account: $(aws sts get-caller-identity --query Account --output text)"
+          echo "📋 Backend Account: $SHARED_SERVICES_ACCOUNT_ID"
+          
+          # Create backend config with assume_role for shared services account
+          cat > "backend-with-assume-role.hcl" << EOF
+          bucket         = "terraform-state-central-multi-env"
+          key            = "terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "terraform-state-locks-common"
+          encrypt        = true
+          workspace_key_prefix = "environments"
+          
+          assume_role = {
+            role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+            session_name = "terraform-destroy-${{ github.run_id }}"
+          }
+          
+          skip_credentials_validation = false
+          skip_metadata_api_check = false
+          skip_region_validation = false
+          use_path_style = false
+          max_retries = 5
+          EOF
+          
+          # Initialize Terraform with backend assume_role configuration
+          terraform init -backend-config=backend-with-assume-role.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -867,31 +872,7 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_DEFAULT_REGION }}
 
-      - name: Assume target account role
-        run: |
-          TFVARS_FILE="tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
-          echo "📋 Reading account info from: $TFVARS_FILE"
-          
-          # Extract account_id from tfvars file
-          TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "$TFVARS_FILE" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
-          
-          if [ -z "$TARGET_ACCOUNT_ID" ]; then
-            echo "⚠️ No account_id found in $TFVARS_FILE, using current account"
-            TARGET_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          fi
-          
-          echo "📋 Target Account ID: $TARGET_ACCOUNT_ID"
-          echo "✅ Using common backend approach - no role assumption needed"
-          
-          TARGET_CREDENTIALS=$(aws sts assume-role \
-            --role-arn $TARGET_ROLE_ARN \
-            --role-session-name github-actions-cleanup-${{ needs.determine-environment.outputs.environment }}-${{ github.run_id }} \
-            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-            --output text)
-          
-          echo "AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)" >> $GITHUB_ENV
-          echo "AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)" >> $GITHUB_ENV
-          echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
+
       - name: Cleanup ALB access log buckets
         run: |
           echo "🧹 Terraform destroy failed - cleaning up ALB access log buckets"
@@ -904,8 +885,37 @@ jobs:
         run: |
           echo "🔄 Retrying Terraform destroy after ALB log cleanup..."
           
+          # Get shared services account from config
+          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          
+          # Use master account credentials directly
+          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
+          
+          # Create backend config with assume_role for shared services account
+          cat > "backend-with-assume-role.hcl" << EOF
+          bucket         = "terraform-state-central-multi-env"
+          key            = "terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "terraform-state-locks-common"
+          encrypt        = true
+          workspace_key_prefix = "environments"
+          
+          assume_role = {
+            role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+            session_name = "terraform-retry-destroy-${{ github.run_id }}"
+          }
+          
+          skip_credentials_validation = false
+          skip_metadata_api_check = false
+          skip_region_validation = false
+          use_path_style = false
+          max_retries = 5
+          EOF
+          
           # Initialize Terraform
-          terraform init -backend-config=shared/backend-common.hcl
+          terraform init -backend-config=backend-with-assume-role.hcl
           
           # Select workspace
           echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
