@@ -120,7 +120,10 @@ production branch → Production environment   → tfvars/prod-terraform.tfvars
 git clone <repository-url>
 cd terraform-infra-orchestrator
 
-# Setup backend resources
+# Configure your shared services account ID
+nano config/aws-accounts.json
+
+# Setup backend resources in shared services account
 ./scripts/setup-backend-per-account.sh
 ```
 
@@ -361,17 +364,19 @@ terraform apply -var-file=tfvars/prod-terraform.tfvars
 
 ### **Backend Architecture**
 ```
-Single S3 Bucket: terraform-state-central-multi-env
-├── environments/
-│   ├── dev/
-│   │   └── terraform.tfstate
-│   ├── staging/
-│   │   └── terraform.tfstate
-│   └── production/
-│       └── terraform.tfstate
+Shared Services Account (Centralized Backend)
+├── S3 Bucket: terraform-state-central-multi-env
+│   ├── environments/
+│   │   ├── dev/terraform.tfstate
+│   │   ├── staging/terraform.tfstate
+│   │   └── production/terraform.tfstate
+│
+└── DynamoDB Table: terraform-state-locks-common
 
-Single DynamoDB Table: terraform-state-locks-common
-└── Handles locking for all environments
+Environment Accounts (Cross-Account Access)
+├── Dev Account (221106935066) → Accesses shared backend
+├── Staging Account (137617557860) → Accesses shared backend  
+└── Production Account → Accesses shared backend
 ```
 
 ### **Environment-Specific Naming**

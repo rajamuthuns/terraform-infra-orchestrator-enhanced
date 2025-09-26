@@ -44,7 +44,7 @@ env:
 
 jobs:
   setup-backends:
-    name: Setup Terraform Backends
+    name: Setup Common Terraform Backend
     runs-on: ubuntu-latest
     if: |
       (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_setup != 'true') ||
@@ -103,11 +103,9 @@ jobs:
           fi
           echo "environment=$ENV" >> $GITHUB_OUTPUT
           echo "✅ Target environment: $ENV"
-      - name: Setup backend configurations
+      - name: Setup common backend configuration
         run: |
-          TARGET_ENV="${{ steps.target-env.outputs.environment }}"
-          
-          echo "🔧 Starting backend setup for environment: $TARGET_ENV"
+          echo "🔧 Setting up common backend for all environments in shared services account"
           echo "📋 Event: ${{ github.event_name }}"
           echo "📋 Action: ${{ github.event.inputs.action }}"
           
@@ -116,6 +114,11 @@ jobs:
             echo "⚠️ Creating missing config/aws-accounts.json..."
             mkdir -p config
             echo '{
+              "shared_services": {
+                "account_id": "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID",
+                "role_name": "OrganizationAccountAccessRole",
+                "description": "Shared services account for centralized backend resources"
+              },
               "dev": {
                 "account_id": "221106935066",
                 "role_name": "OrganizationAccountAccessRole"
@@ -132,90 +135,139 @@ jobs:
             echo "✅ Created config/aws-accounts.json"
           fi
           
-          TARGET_ACCOUNT_ID=$(jq -r ".${TARGET_ENV}.account_id" config/aws-accounts.json)
-          if [ "$TARGET_ACCOUNT_ID" = "null" ] || [ -z "$TARGET_ACCOUNT_ID" ]; then
-            echo "❌ Error: Account ID not found for environment $TARGET_ENV"
-            echo "Available accounts:"
-            cat config/aws-accounts.json
+          # Get shared services account ID
+          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          
+          if [ "$SHARED_SERVICES_ACCOUNT_ID" = "null" ] || [ "$SHARED_SERVICES_ACCOUNT_ID" = "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID" ]; then
+            echo "❌ Shared services account ID not configured in config/aws-accounts.json"
+            echo "Please update the shared_services.account_id field with your actual account ID"
             exit 1
           fi
           
-          echo "✅ Setting up backend for environment: $TARGET_ENV (Account: $TARGET_ACCOUNT_ID)"
+          echo "📋 Using shared services account: $SHARED_SERVICES_ACCOUNT_ID"
           
-          # Assume OrganizationAccountAccessRole for the target account
-          ROLE_ARN="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          # Use single common resources
+          COMMON_BUCKET_NAME="terraform-state-central-multi-env"
+          COMMON_DYNAMODB_TABLE="terraform-state-locks-common"
           
-          echo "Assuming role: $ROLE_ARN"
-          CREDENTIALS=$(aws sts assume-role \
-            --role-arn "$ROLE_ARN" \
-            --role-session-name "backend-setup-${TARGET_ENV}" \
+          # Assume role in shared services account for backend resources
+          SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          
+          echo "🔐 Assuming role in shared services account: $SHARED_SERVICES_ROLE_ARN"
+          SHARED_CREDENTIALS=$(aws sts assume-role \
+            --role-arn "$SHARED_SERVICES_ROLE_ARN" \
+            --role-session-name "backend-setup-shared-services" \
             --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
             --output text)
           
-          export AWS_ACCESS_KEY_ID=$(echo $CREDENTIALS | cut -d' ' -f1)
-          export AWS_SECRET_ACCESS_KEY=$(echo $CREDENTIALS | cut -d' ' -f2)
-          export AWS_SESSION_TOKEN=$(echo $CREDENTIALS | cut -d' ' -f3)
+          export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
+          export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
+          export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
           
-          # Backend resource names
-          BUCKET_NAME="terraform-state-${TARGET_ENV}-${TARGET_ACCOUNT_ID}"
-          DYNAMODB_TABLE="terraform-state-locks-${TARGET_ENV}"
-          
-          # Create S3 bucket
-          echo "Creating S3 bucket: $BUCKET_NAME"
-          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-            echo "Bucket $BUCKET_NAME already exists, skipping creation"
+          # Create common S3 bucket (in shared services account)
+          echo "Creating common S3 bucket: $COMMON_BUCKET_NAME"
+          if aws s3api head-bucket --bucket "$COMMON_BUCKET_NAME" 2>/dev/null; then
+            echo "Common bucket $COMMON_BUCKET_NAME already exists"
           else
-            aws s3api create-bucket --bucket "$BUCKET_NAME" --region us-east-1
-            aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" --versioning-configuration Status=Enabled
-            aws s3api put-bucket-encryption --bucket "$BUCKET_NAME" --server-side-encryption-configuration '{
+            aws s3api create-bucket --bucket "$COMMON_BUCKET_NAME" --region us-east-1
+            aws s3api put-bucket-versioning --bucket "$COMMON_BUCKET_NAME" --versioning-configuration Status=Enabled
+            aws s3api put-bucket-encryption --bucket "$COMMON_BUCKET_NAME" --server-side-encryption-configuration '{
               "Rules": [{
                 "ApplyServerSideEncryptionByDefault": {
                   "SSEAlgorithm": "AES256"
                 }
               }]
             }'
-            aws s3api put-public-access-block --bucket "$BUCKET_NAME" --public-access-block-configuration \
+            aws s3api put-public-access-block --bucket "$COMMON_BUCKET_NAME" --public-access-block-configuration \
               "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
           fi
           
-          # Create DynamoDB table
-          echo "Creating DynamoDB table: $DYNAMODB_TABLE"
-          if aws dynamodb describe-table --table-name "$DYNAMODB_TABLE" 2>/dev/null; then
-            echo "Table $DYNAMODB_TABLE already exists, skipping creation"
+          # Create common DynamoDB table (in shared services account)
+          echo "Creating common DynamoDB table: $COMMON_DYNAMODB_TABLE"
+          if aws dynamodb describe-table --table-name "$COMMON_DYNAMODB_TABLE" 2>/dev/null; then
+            echo "Common table $COMMON_DYNAMODB_TABLE already exists"
           else
             aws dynamodb create-table \
-              --table-name "$DYNAMODB_TABLE" \
+              --table-name "$COMMON_DYNAMODB_TABLE" \
               --attribute-definitions AttributeName=LockID,AttributeType=S \
               --key-schema AttributeName=LockID,KeyType=HASH \
               --billing-mode PAY_PER_REQUEST \
               --sse-specification Enabled=true
           fi
           
-          # Update backend configuration file
-          echo "bucket         = \"${BUCKET_NAME}\"" > "shared/backend-${TARGET_ENV}.hcl"
-          echo "key            = \"environments/${TARGET_ENV}/terraform.tfstate\"" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "region         = \"us-east-1\"" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "dynamodb_table = \"${DYNAMODB_TABLE}\"" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "encrypt        = true" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "workspace_key_prefix = \"env\"" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "skip_credentials_validation = false" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "skip_metadata_api_check = false" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "skip_region_validation = false" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "use_path_style = false" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "" >> "shared/backend-${TARGET_ENV}.hcl"
-          echo "max_retries = 5" >> "shared/backend-${TARGET_ENV}.hcl"
+          # Update bucket policy for cross-account access
+          echo "Updating bucket policy for cross-account access..."
           
-          echo "✅ Backend setup completed for $TARGET_ENV"
-          echo "📦 Bucket: $BUCKET_NAME"
-          echo "🗄️ DynamoDB: $DYNAMODB_TABLE"
-          echo "📄 Backend file updated:"
-          cat "shared/backend-${TARGET_ENV}.hcl"
+          # Build list of account ARNs for cross-account access
+          ACCOUNT_ARNS="\"arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:root\""
+          
+          # Add environment accounts
+          for env in $(jq -r 'keys[]' config/aws-accounts.json); do
+            # Skip shared_services entry
+            if [ "$env" = "shared_services" ]; then
+              continue
+            fi
+            
+            account_id=$(jq -r ".${env}.account_id" config/aws-accounts.json)
+            if [ "$account_id" != "null" ] && [ "$account_id" != "REPLACE_WITH_PRODUCTION_ACCOUNT_ID" ]; then
+              ACCOUNT_ARNS="${ACCOUNT_ARNS},\"arn:aws:iam::${account_id}:role/OrganizationAccountAccessRole\""
+            fi
+          done
+          
+          # Apply bucket policy
+          aws s3api put-bucket-policy --bucket "$COMMON_BUCKET_NAME" --policy "{
+            \"Version\": \"2012-10-17\",
+            \"Statement\": [
+              {
+                \"Sid\": \"AllowCrossAccountAccess\",
+                \"Effect\": \"Allow\",
+                \"Principal\": {
+                  \"AWS\": [${ACCOUNT_ARNS}]
+                },
+                \"Action\": [
+                  \"s3:GetObject\",
+                  \"s3:PutObject\",
+                  \"s3:DeleteObject\",
+                  \"s3:ListBucket\"
+                ],
+                \"Resource\": [
+                  \"arn:aws:s3:::${COMMON_BUCKET_NAME}\",
+                  \"arn:aws:s3:::${COMMON_BUCKET_NAME}/*\"
+                ]
+              }
+            ]
+          }"
+          
+          # Create common backend configuration file (same for all environments)
+          cat > "shared/backend-common.hcl" << EOF
+          # Common backend configuration for all environments
+          # Workspaces handle environment separation
+          bucket         = "${COMMON_BUCKET_NAME}"
+          key            = "terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "${COMMON_DYNAMODB_TABLE}"
+          encrypt        = true
+          
+          # Workspace configuration - creates separate state files per workspace
+          workspace_key_prefix = "environments"
+          
+          skip_credentials_validation = false
+          skip_metadata_api_check = false
+          skip_region_validation = false
+          use_path_style = false
+          max_retries = 5
+          EOF
+          
+          echo "✅ Common backend setup completed"
+          echo "📦 Bucket: $COMMON_BUCKET_NAME (in shared services account)"
+          echo "🗄️ DynamoDB: $COMMON_DYNAMODB_TABLE (in shared services account)"
+          echo "🏢 Workspaces will handle environment separation"
+          echo "📄 Common backend config created: shared/backend-common.hcl"
       - name: Upload backend artifacts
         uses: actions/upload-artifact@v4
         with:
           name: terraform-backends
-          path: shared/backend-*.hcl
+          path: shared/backend-common.hcl
           retention-days: 7
 
       - name: Set setup success output
@@ -339,28 +391,21 @@ jobs:
           echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
       - name: Check backend configuration
         run: |
-          BACKEND_FILE="shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl"
+          BACKEND_FILE="shared/backend-common.hcl"
           if [ ! -f "$BACKEND_FILE" ]; then
-            echo "❌ Backend configuration file not found: $BACKEND_FILE"
+            echo "❌ Common backend configuration file not found: $BACKEND_FILE"
             echo "This usually means the setup stage was skipped or failed."
             echo "Available backend files:"
             ls -la shared/backend-*.hcl 2>/dev/null || echo "No backend files found"
             exit 1
           fi
           
-          if grep -q "REPLACE_WITH_ACTUAL" "$BACKEND_FILE"; then
-            echo "❌ Backend configuration contains placeholder values"
-            echo "Content of $BACKEND_FILE:"
-            cat "$BACKEND_FILE"
-            echo "The setup stage needs to run first to replace these placeholders."
-            exit 1
-          fi
-          
-          echo "✅ Backend configuration looks good:"
+          echo "✅ Common backend configuration looks good:"
           cat "$BACKEND_FILE"
+          echo "🏢 Environment isolation will be handled by workspace: ${{ needs.determine-environment.outputs.environment }}"
       - name: Terraform Init
         run: |
-          terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
+          terraform init -backend-config=shared/backend-common.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -473,27 +518,20 @@ jobs:
           echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
       - name: Check backend configuration
         run: |
-          BACKEND_FILE="shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl"
+          BACKEND_FILE="shared/backend-common.hcl"
           if [ ! -f "$BACKEND_FILE" ]; then
-            echo "❌ Backend configuration file not found: $BACKEND_FILE"
+            echo "❌ Common backend configuration file not found: $BACKEND_FILE"
             echo "Available backend files:"
             ls -la shared/backend-*.hcl 2>/dev/null || echo "No backend files found"
             exit 1
           fi
           
-          if grep -q "REPLACE_WITH_ACTUAL" "$BACKEND_FILE"; then
-            echo "❌ Backend configuration contains placeholder values"
-            echo "Content of $BACKEND_FILE:"
-            cat "$BACKEND_FILE"
-            echo "The setup stage needs to run first to replace these placeholders."
-            exit 1
-          fi
-          
-          echo "✅ Backend configuration looks good:"
+          echo "✅ Common backend configuration looks good:"
           cat "$BACKEND_FILE"
+          echo "🏢 Environment isolation will be handled by workspace: ${{ needs.determine-environment.outputs.environment }}"
       - name: Terraform Init
         run: |
-          terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
+          terraform init -backend-config=shared/backend-common.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -637,27 +675,20 @@ jobs:
           echo "AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)" >> $GITHUB_ENV
       - name: Check backend configuration
         run: |
-          BACKEND_FILE="shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl"
+          BACKEND_FILE="shared/backend-common.hcl"
           if [ ! -f "$BACKEND_FILE" ]; then
-            echo "❌ Backend configuration file not found: $BACKEND_FILE"
+            echo "❌ Common backend configuration file not found: $BACKEND_FILE"
             echo "Available backend files:"
             ls -la shared/backend-*.hcl 2>/dev/null || echo "No backend files found"
             exit 1
           fi
           
-          if grep -q "REPLACE_WITH_ACTUAL" "$BACKEND_FILE"; then
-            echo "❌ Backend configuration contains placeholder values"
-            echo "Content of $BACKEND_FILE:"
-            cat "$BACKEND_FILE"
-            echo "Please run setup first or use an existing backend configuration."
-            exit 1
-          fi
-          
-          echo "✅ Backend configuration looks good:"
+          echo "✅ Common backend configuration looks good:"
           cat "$BACKEND_FILE"
+          echo "🏢 Environment isolation will be handled by workspace: ${{ needs.determine-environment.outputs.environment }}"
       - name: Terraform Init
         run: |
-          terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
+          terraform init -backend-config=shared/backend-common.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -757,7 +788,7 @@ jobs:
           echo "🔄 Retrying Terraform destroy after ALB log cleanup..."
           
           # Initialize Terraform
-          terraform init -backend-config=shared/backend-${{ needs.determine-environment.outputs.environment }}.hcl
+          terraform init -backend-config=shared/backend-common.hcl
           
           # Select workspace
           terraform workspace select ${{ needs.determine-environment.outputs.environment }}

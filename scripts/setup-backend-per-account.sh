@@ -80,12 +80,32 @@ ORIGINAL_AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN"
 
 # Function to setup common backend resources (run once)
 setup_common_backend() {
-  echo "🔧 Setting up common backend resources"
+  echo "🔧 Setting up common backend resources in shared services account"
   
-  # Use original management account credentials for common resources
-  export AWS_ACCESS_KEY_ID="$ORIGINAL_AWS_ACCESS_KEY_ID"
-  export AWS_SECRET_ACCESS_KEY="$ORIGINAL_AWS_SECRET_ACCESS_KEY"
-  export AWS_SESSION_TOKEN="$ORIGINAL_AWS_SESSION_TOKEN"
+  # Get shared services account ID
+  SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' "$ACCOUNTS_FILE")
+  
+  if [ "$SHARED_SERVICES_ACCOUNT_ID" = "null" ] || [ "$SHARED_SERVICES_ACCOUNT_ID" = "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID" ]; then
+    echo "❌ Shared services account ID not configured in $ACCOUNTS_FILE"
+    echo "Please update the shared_services.account_id field with your actual account ID"
+    exit 1
+  fi
+  
+  echo "📋 Using shared services account: $SHARED_SERVICES_ACCOUNT_ID"
+  
+  # Assume role in shared services account for backend resources
+  SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+  
+  echo "🔐 Assuming role in shared services account: $SHARED_SERVICES_ROLE_ARN"
+  SHARED_CREDENTIALS=$(aws sts assume-role \
+    --role-arn "$SHARED_SERVICES_ROLE_ARN" \
+    --role-session-name "backend-setup-shared-services" \
+    --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+    --output text)
+  
+  export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
+  export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
+  export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
   
   # Create common S3 bucket (in management account)
   echo "Creating common S3 bucket: $COMMON_BUCKET_NAME"
@@ -110,18 +130,27 @@ setup_common_backend() {
   # Always update bucket policy (whether bucket is new or existing)
   echo "Updating bucket policy for cross-account access..."
   
-  # Get current AWS account ID (management account)
-  MANAGEMENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+  # Build list of account ARNs for cross-account access
+  ACCOUNT_ARNS="\"arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:root\""
   
-  # Build list of account ARNs
-  ACCOUNT_ARNS="\"arn:aws:iam::${MANAGEMENT_ACCOUNT_ID}:root\""
-  
+  # Add environment accounts
   for env in $(jq -r 'keys[]' "$ACCOUNTS_FILE"); do
+    # Skip shared_services entry
+    if [ "$env" = "shared_services" ]; then
+      continue
+    fi
+    
     account_id=$(jq -r ".${env}.account_id" "$ACCOUNTS_FILE")
-    if [ "$account_id" != "null" ] && [ "$account_id" != "REPLACE_WITH_PRODUCTION_ACCOUNT_ID" ]; then
+    if [ "$account_id" != "null" ] && [ "$account_id" != "REPLACE_WITH_PRODUCTION_ACCOUNT_ID" ] && [ "$account_id" != "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID" ]; then
       ACCOUNT_ARNS="${ACCOUNT_ARNS},\"arn:aws:iam::${account_id}:role/OrganizationAccountAccessRole\""
     fi
   done
+  
+  # Add management account if different from shared services
+  CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "")
+  if [ -n "$CURRENT_ACCOUNT_ID" ] && [ "$CURRENT_ACCOUNT_ID" != "$SHARED_SERVICES_ACCOUNT_ID" ]; then
+    ACCOUNT_ARNS="${ACCOUNT_ARNS},\"arn:aws:iam::${CURRENT_ACCOUNT_ID}:root\""
+  fi
   
   # Apply bucket policy
   aws s3api put-bucket-policy --bucket "$COMMON_BUCKET_NAME" --policy "{
@@ -147,10 +176,20 @@ setup_common_backend() {
     ]
   }"
   
-  echo "✅ Bucket policy updated with management account and environment accounts"
+  echo "✅ Bucket policy updated with shared services account and environment accounts"
+  echo "📋 Accounts with access:"
+  echo "   - Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID (full access)"
+  for env in $(jq -r 'keys[]' "$ACCOUNTS_FILE"); do
+    if [ "$env" != "shared_services" ]; then
+      account_id=$(jq -r ".${env}.account_id" "$ACCOUNTS_FILE")
+      if [ "$account_id" != "null" ] && [ "$account_id" != "REPLACE_WITH_PRODUCTION_ACCOUNT_ID" ]; then
+        echo "   - $env Account: $account_id (via OrganizationAccountAccessRole)"
+      fi
+    fi
+  done
   fi
   
-  # Create common DynamoDB table (in management account)
+  # Create common DynamoDB table (in shared services account)
   echo "Creating common DynamoDB table: $COMMON_DYNAMODB_TABLE"
   if aws dynamodb describe-table --table-name "$COMMON_DYNAMODB_TABLE" 2>/dev/null; then
     echo "Common table $COMMON_DYNAMODB_TABLE already exists"
@@ -268,10 +307,11 @@ fi
 
 echo ""
 echo "🎉 Backend setup summary:"
-echo "📦 Common S3 Bucket: $COMMON_BUCKET_NAME"
-echo "🗄️ Common DynamoDB Table: $COMMON_DYNAMODB_TABLE"
+echo "📦 Common S3 Bucket: $COMMON_BUCKET_NAME (in shared services account)"
+echo "🗄️ Common DynamoDB Table: $COMMON_DYNAMODB_TABLE (in shared services account)"
 echo "🏢 Workspaces created for environment isolation"
 echo "📍 State files will be stored as: environments/{workspace}/terraform.tfstate"
+echo "🔐 Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID"
 echo ""
 echo "🔄 Note: If you add new environments to config/aws-accounts.json later,"
 echo "   just run this script again to update the bucket policy and create workspaces."
