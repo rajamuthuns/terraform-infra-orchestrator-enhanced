@@ -467,7 +467,7 @@ jobs:
           encrypt        = true
           workspace_key_prefix = "environments"
           
-          assume_role {
+          assume_role = {
             role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
             session_name = "terraform-backend-${{ github.run_id }}"
           }
@@ -608,7 +608,7 @@ jobs:
           encrypt        = true
           workspace_key_prefix = "environments"
           
-          assume_role {
+          assume_role = {
             role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
             session_name = "terraform-backend-${{ github.run_id }}"
           }
