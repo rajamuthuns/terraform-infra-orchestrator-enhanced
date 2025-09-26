@@ -1,6 +1,6 @@
 {
   "shared_services": {
-    "account_id": "REPLACE_WITH_SHARED_SERVICES_ACCOUNT_ID",
+    "account_id": "345918514280",
     "role_name": "OrganizationAccountAccessRole",
     "description": "Shared services account for centralized backend resources"
   },
