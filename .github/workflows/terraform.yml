@@ -469,7 +469,7 @@ jobs:
           encrypt        = true
           workspace_key_prefix = "environments"
           
-          assume_role = {
+          assume_role {
             role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
             session_name = "terraform-backend-${{ github.run_id }}"
           }
@@ -610,7 +610,7 @@ jobs:
           encrypt        = true
           workspace_key_prefix = "environments"
           
-          assume_role = {
+          assume_role {
             role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
             session_name = "terraform-backend-${{ github.run_id }}"
           }
@@ -835,6 +835,8 @@ jobs:
       needs.terraform-destroy.result == 'failure' &&
       github.event_name == 'workflow_dispatch' && 
       github.event.inputs.action == 'destroy'
+    outputs:
+      retry-success: ${{ steps.retry-result.outputs.success }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -969,6 +971,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Set retry success output
+        id: retry-result
+        run: echo "success=true" >> $GITHUB_OUTPUT
 
       - name: Force cleanup remaining resources (if retry still fails)
         if: failure()
@@ -1141,6 +1147,54 @@ jobs:
           echo "**Target Environment:** ${{ steps.promotion.outputs.target_env }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ **Status:** Promotion PR created successfully" >> $GITHUB_STEP_SUMMARY
+
+  destroy-status:
+    name: Destroy Status Summary
+    runs-on: ubuntu-latest
+    needs: [determine-environment, terraform-destroy, cleanup-and-retry-destroy]
+    if: |
+      always() && 
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'destroy'
+    steps:
+      - name: Determine final destroy status
+        id: final-status
+        run: |
+          echo "🔍 Checking destroy operation results..."
+          echo "Main destroy result: ${{ needs.terraform-destroy.result }}"
+          echo "Cleanup retry result: ${{ needs.cleanup-and-retry-destroy.result }}"
+          echo "Cleanup retry success: ${{ needs.cleanup-and-retry-destroy.outputs.retry-success }}"
+          
+          if [ "${{ needs.terraform-destroy.result }}" == "success" ]; then
+            echo "✅ Destroy completed successfully on first attempt"
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=Infrastructure destroyed successfully" >> $GITHUB_OUTPUT
+          elif [ "${{ needs.cleanup-and-retry-destroy.result }}" == "success" ] && [ "${{ needs.cleanup-and-retry-destroy.outputs.retry-success }}" == "true" ]; then
+            echo "✅ Destroy completed successfully after ALB cleanup and retry"
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=Infrastructure destroyed successfully after ALB log cleanup" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Destroy operation failed"
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=Infrastructure destroy failed - manual cleanup may be required" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Add final status summary
+        run: |
+          echo "## 🗑️ Infrastructure Destroy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ needs.determine-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Final Status:** ${{ steps.final-status.outputs.status == 'success' && '✅ Success' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Message:** ${{ steps.final-status.outputs.message }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.terraform-destroy.result }}" == "failure" ] && [ "${{ steps.final-status.outputs.status }}" == "success" ]; then
+            echo "### 🔄 Recovery Actions Taken:" >> $GITHUB_STEP_SUMMARY
+            echo "- 🧹 ALB access log buckets were cleaned up" >> $GITHUB_STEP_SUMMARY
+            echo "- 🔄 Terraform destroy was retried successfully" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ All infrastructure has been destroyed" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "📋 **Next Step:** Review and merge the PR to deploy to ${{ steps.promotion.outputs.target_env }}" >> $GITHUB_STEP_SUMMARY
       - name: No promotion needed
         if: steps.promotion.outputs.skip_promotion == 'true'
