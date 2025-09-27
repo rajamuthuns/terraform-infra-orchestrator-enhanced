@@ -28,7 +28,7 @@ environment = "staging"
 
 alb_spec = {
   linux-alb = {
-    vpc_name             = "dev-mig-target-vpc"
+    vpc_name             = "stg-mig-target-vpc"
     http_enabled         = true
     https_enabled        = false
     name                 = "linux-alb"
@@ -36,7 +36,7 @@ alb_spec = {
     health_check_matcher = "200"
   },
   windows-alb = {
-    vpc_name             = "dev-mig-target-vpc"
+    vpc_name             = "stg-mig-target-vpc"
     http_enabled         = true
     https_enabled        = false
     name                 = "windows-alb"

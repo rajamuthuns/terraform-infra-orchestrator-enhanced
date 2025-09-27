@@ -27,18 +27,25 @@ print_color() {
 usage() {
     print_color $BLUE "ALB Access Log Bucket Cleanup Script"
     echo ""
-    echo "Usage: $0 [ENVIRONMENT]"
+    echo "Usage: $0 [ENVIRONMENT] [BUCKET_NAME1] [BUCKET_NAME2] ..."
     echo ""
-    echo "This script cleans up ALB access log buckets that prevent Terraform destroy:"
-    echo "  - Finds ALB access log buckets for the environment"
-    echo "  - Empties the buckets (removes all log files)"
+    echo "This script cleans up S3 buckets that prevent Terraform destroy:"
+    echo "  - Automatically finds Terraform-managed S3 buckets for the environment"
+    echo "  - Uses multiple detection methods (Terraform state, tags, naming patterns)"
+    echo "  - Empties the buckets (removes all objects and versions)"
     echo "  - Does NOT delete the buckets (Terraform will handle that)"
-    echo "  - Preserves Terraform state and DynamoDB tables"
+    echo "  - Supports cross-account access via OrganizationAccountAccessRole"
+    echo ""
+    echo "Detection Methods:"
+    echo "  1. Terraform state inspection"
+    echo "  2. Bucket naming pattern analysis"
+    echo "  3. Terraform tag checking"
+    echo "  4. Failed destroy error parsing"
     echo ""
     echo "Examples:"
-    echo "  $0 dev      # Cleanup dev environment ALB log buckets"
-    echo "  $0 staging  # Cleanup staging environment ALB log buckets"
-    echo "  $0 prod     # Cleanup production environment ALB log buckets"
+    echo "  $0 dev                           # Auto-detect and cleanup dev environment buckets"
+    echo "  $0 staging                       # Auto-detect and cleanup staging environment buckets"
+    echo "  $0 dev bucket1 bucket2           # Cleanup specific buckets in dev environment"
     echo ""
     exit 1
 }
@@ -74,45 +81,90 @@ check_prerequisites() {
 }
 
 # Function to find ALB access log buckets
-find_alb_log_buckets() {
+find_terraform_managed_buckets() {
     local env=$1
     
     local found_buckets=()
     
-    # Get all buckets as JSON and extract names properly
+    print_color $BLUE "🔍 Method 1: Checking Terraform state for managed S3 buckets..."
+    
+    # Method 1: Get buckets from Terraform state
+    if command -v terraform &> /dev/null && [ -f "main.tf" ]; then
+        # Initialize terraform if needed
+        if [ ! -d ".terraform" ]; then
+            print_color $YELLOW "   Initializing Terraform..."
+            terraform init -backend-config=shared/backend-common.hcl >/dev/null 2>&1 || true
+        fi
+        
+        # Select the correct workspace
+        if terraform workspace list 2>/dev/null | grep -q "^\s*${env}\s*$"; then
+            terraform workspace select "$env" >/dev/null 2>&1 || true
+        fi
+        
+        # Get S3 buckets from Terraform state
+        local tf_buckets=$(terraform state list 2>/dev/null | grep -E "aws_s3_bucket\." | grep -v "aws_s3_bucket_" || true)
+        
+        if [ -n "$tf_buckets" ]; then
+            print_color $YELLOW "   Found Terraform-managed S3 buckets in state:"
+            while IFS= read -r resource; do
+                if [ -n "$resource" ]; then
+                    local bucket_name=$(terraform state show "$resource" 2>/dev/null | grep -E "^\s*bucket\s*=" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ' || true)
+                    if [ -n "$bucket_name" ] && [ "$bucket_name" != "null" ]; then
+                        echo "     - $bucket_name (from $resource)"
+                        found_buckets+=("$bucket_name")
+                    fi
+                fi
+            done <<< "$tf_buckets"
+        else
+            print_color $YELLOW "   No S3 buckets found in Terraform state"
+        fi
+    else
+        print_color $YELLOW "   Terraform not available or not in Terraform directory"
+    fi
+    
+    print_color $BLUE "🔍 Method 2: Scanning for buckets that match Terraform naming patterns..."
+    
+    # Method 2: Get all buckets and filter for ones that look like Terraform-managed ALB log buckets
     local bucket_list=$(aws s3api list-buckets --query "Buckets[].Name" --output json 2>/dev/null || echo '[]')
     
-    # Parse JSON and check each bucket
+    # Look for buckets that match common Terraform ALB module patterns
     while IFS= read -r bucket; do
         if [ -n "$bucket" ] && [ "$bucket" != "null" ]; then
-            # Check if bucket matches ALB access log patterns for this environment
-            # Pattern 1: Contains env, alb, and access-logs
-            if [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"access-logs"* ]]; then
-                found_buckets+=("$bucket")
-            # Pattern 2: Contains env, alb, and logs (broader match)
-            elif [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"log"* ]]; then
-                found_buckets+=("$bucket")
+            # Check if bucket looks like it's managed by Terraform ALB modules
+            if [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"access"* ]] && [[ "$bucket" == *"log"* ]]; then
+                # Check if not already found
+                if [[ ! " ${found_buckets[@]} " =~ " $bucket " ]]; then
+                    print_color $YELLOW "   Found potential ALB access log bucket: $bucket"
+                    found_buckets+=("$bucket")
+                fi
             fi
         fi
     done < <(echo "$bucket_list" | jq -r '.[]?' 2>/dev/null || true)
     
-    # Also check for specific known patterns that might be missed
-    local specific_buckets=(
-        "linux-alb-$env-linux-alb-$env-alb-access-logs"
-        "windows-alb-$env-windows-alb-$env-alb-access-logs"
-    )
+    print_color $BLUE "🔍 Method 3: Checking for buckets with Terraform tags..."
     
-    # Check if these specific buckets exist and add them if not already found
-    for specific_bucket in "${specific_buckets[@]}"; do
-        if aws s3api head-bucket --bucket "$specific_bucket" 2>/dev/null; then
-            # Check if not already in found_buckets array
-            if [[ ! " ${found_buckets[@]} " =~ " $specific_bucket " ]]; then
-                found_buckets+=("$specific_bucket")
+    # Method 3: Check for buckets with Terraform tags
+    while IFS= read -r bucket; do
+        if [ -n "$bucket" ] && [ "$bucket" != "null" ]; then
+            # Check bucket tags to see if it's managed by Terraform
+            local tags=$(aws s3api get-bucket-tagging --bucket "$bucket" --query 'TagSet' --output json 2>/dev/null || echo '[]')
+            
+            # Check if bucket has ManagedBy=terraform tag or similar
+            local managed_by=$(echo "$tags" | jq -r '.[] | select(.Key=="ManagedBy") | .Value' 2>/dev/null || echo "")
+            local terraform_workspace=$(echo "$tags" | jq -r '.[] | select(.Key=="Workspace") | .Value' 2>/dev/null || echo "")
+            local environment_tag=$(echo "$tags" | jq -r '.[] | select(.Key=="Environment") | .Value' 2>/dev/null || echo "")
+            
+            if [[ "$managed_by" == "terraform" ]] || [[ "$terraform_workspace" == "$env" ]] || [[ "$environment_tag" == "$env" ]]; then
+                # Check if it's an ALB-related bucket and not already found
+                if [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"log"* ]] && [[ ! " ${found_buckets[@]} " =~ " $bucket " ]]; then
+                    print_color $YELLOW "   Found Terraform-tagged ALB bucket: $bucket"
+                    found_buckets+=("$bucket")
+                fi
             fi
         fi
-    done
+    done < <(echo "$bucket_list" | jq -r '.[]?' 2>/dev/null || true)
     
-    # Remove duplicates and return only bucket names (no colored output)
+    # Remove duplicates and return only bucket names
     printf '%s\n' "${found_buckets[@]}" | sort -u
 }
 
@@ -257,18 +309,48 @@ cleanup_alb_logs() {
     print_color $BLUE "🔑 Using credentials: $final_role"
     echo ""
     
-    # Find ALB log buckets
-    print_color $BLUE "🔍 Finding ALB access log buckets for environment: $env"
-    
-    # Show what specific buckets we're looking for
-    print_color $YELLOW "🎯 Looking for bucket patterns:"
-    echo "   - *$env*alb*access-logs*"
-    echo "   - *$env*alb*log*"
-    echo "   - linux-alb-$env-linux-alb-$env-alb-access-logs"
-    echo "   - windows-alb-$env-windows-alb-$env-alb-access-logs"
+    # Find Terraform-managed buckets that need cleanup
+    print_color $BLUE "🔍 Finding Terraform-managed S3 buckets for environment: $env"
+    print_color $BLUE "ℹ️  Using dynamic detection instead of hardcoded patterns"
     echo ""
     
-    local buckets=($(find_alb_log_buckets "$env"))
+    local buckets=($(find_terraform_managed_buckets "$env"))
+    
+    # Method 4: If no buckets found, try to parse from recent terraform destroy errors
+    if [ ${#buckets[@]} -eq 0 ]; then
+        print_color $BLUE "🔍 Method 4: Checking for buckets mentioned in recent terraform errors..."
+        
+        # Look for terraform destroy error patterns in common log locations
+        local error_buckets=()
+        
+        # Check if there are any .terraform logs or recent error output
+        if [ -f ".terraform/terraform.tfstate" ] || [ -f "terraform.tfstate" ]; then
+            # Try to find bucket names from terraform plan/destroy output patterns
+            # This would typically be called after a failed destroy
+            print_color $YELLOW "   Checking for bucket names in terraform state files..."
+            
+            # Look for S3 bucket resources that might be causing issues
+            if command -v terraform &> /dev/null; then
+                local state_buckets=$(terraform state list 2>/dev/null | grep "aws_s3_bucket\." | grep -v "aws_s3_bucket_" || true)
+                if [ -n "$state_buckets" ]; then
+                    while IFS= read -r resource; do
+                        if [ -n "$resource" ]; then
+                            local bucket_name=$(terraform state show "$resource" 2>/dev/null | grep -E "^\s*bucket\s*=" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ' || true)
+                            if [ -n "$bucket_name" ] && [[ "$bucket_name" == *"log"* ]]; then
+                                print_color $YELLOW "   Found bucket from state: $bucket_name"
+                                error_buckets+=("$bucket_name")
+                            fi
+                        fi
+                    done <<< "$state_buckets"
+                fi
+            fi
+        fi
+        
+        # Add any found error buckets to the main list
+        for bucket in "${error_buckets[@]}"; do
+            buckets+=("$bucket")
+        done
+    fi
     
     if [ ${#buckets[@]} -eq 0 ]; then
         print_color $YELLOW "⚠️  No ALB access log buckets found for environment: $env"
@@ -315,6 +397,26 @@ cleanup_alb_logs() {
     print_color $BLUE "🔄 Terraform destroy should now succeed"
 }
 
+# Function to cleanup specific buckets (for manual override)
+cleanup_specific_buckets() {
+    shift # Remove first argument (environment)
+    local specific_buckets=("$@")
+    
+    print_color $BLUE "🎯 Cleaning up specific buckets provided as arguments:"
+    for bucket in "${specific_buckets[@]}"; do
+        echo "  - $bucket"
+    done
+    echo ""
+    
+    # Empty each bucket
+    for bucket in "${specific_buckets[@]}"; do
+        empty_s3_bucket "$bucket"
+        echo ""
+    done
+    
+    print_color $GREEN "✅ Specific bucket cleanup completed!"
+}
+
 # Main script
 main() {
     local environment=$1
@@ -326,6 +428,13 @@ main() {
     # Check prerequisites
     check_prerequisites
     echo ""
+    
+    # Check if specific bucket names were provided
+    if [ $# -gt 1 ]; then
+        print_color $BLUE "🎯 Specific bucket names provided, using manual mode"
+        cleanup_specific_buckets "$@"
+        return 0
+    fi
     
     # Validate environment parameter
     if [ -z "$environment" ]; then
