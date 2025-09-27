@@ -197,7 +197,64 @@ cleanup_alb_logs() {
     
     # Show current account context for debugging
     local current_account=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "Unknown")
-    print_color $YELLOW "🏢 Running in AWS Account: $current_account"
+    print_color $YELLOW "🏢 Currently running in AWS Account: $current_account"
+    
+    # Get target account ID for the environment
+    local target_account_id=""
+    if [ -f "$ACCOUNTS_FILE" ]; then
+        target_account_id=$(jq -r ".${env}.account_id" "$ACCOUNTS_FILE" 2>/dev/null || echo "")
+    fi
+    
+    if [ -z "$target_account_id" ] || [ "$target_account_id" = "null" ]; then
+        print_color $YELLOW "⚠️  No target account configured for environment: $env"
+        print_color $BLUE "ℹ️  Will search for buckets in current account: $current_account"
+        echo ""
+    else
+        print_color $BLUE "🎯 Target environment account: $target_account_id"
+        
+        # Check if we need to assume role in target account
+        if [ "$current_account" != "$target_account_id" ]; then
+            print_color $YELLOW "🔄 Need to assume role in target account for bucket access"
+            
+            # Assume role in target account
+            local target_role_arn="arn:aws:iam::${target_account_id}:role/OrganizationAccountAccessRole"
+            print_color $BLUE "🔐 Assuming role: $target_role_arn"
+            
+            if TARGET_CREDENTIALS=$(aws sts assume-role \
+                --role-arn "$target_role_arn" \
+                --role-session-name "alb-cleanup-$env-$(date +%s)" \
+                --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                --output text 2>&1); then
+                
+                # Export credentials for this session
+                export AWS_ACCESS_KEY_ID=$(echo $TARGET_CREDENTIALS | cut -d' ' -f1)
+                export AWS_SECRET_ACCESS_KEY=$(echo $TARGET_CREDENTIALS | cut -d' ' -f2)
+                export AWS_SESSION_TOKEN=$(echo $TARGET_CREDENTIALS | cut -d' ' -f3)
+                
+                # Verify we're now in the target account
+                local new_account=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "Unknown")
+                print_color $GREEN "✅ Successfully assumed role in target account: $new_account"
+                
+                if [ "$new_account" != "$target_account_id" ]; then
+                    print_color $RED "❌ Role assumption failed - still in wrong account"
+                    return 1
+                fi
+            else
+                print_color $RED "❌ Failed to assume role in target account: $target_account_id"
+                print_color $YELLOW "Error: $TARGET_CREDENTIALS"
+                print_color $BLUE "ℹ️  Will search for buckets in current account instead"
+            fi
+        else
+            print_color $GREEN "✅ Already in target account"
+        fi
+        echo ""
+    fi
+    
+    # Show final account context after potential role assumption
+    local final_account=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "Unknown")
+    local final_role=$(aws sts get-caller-identity --query Arn --output text 2>/dev/null || echo "Unknown")
+    print_color $BLUE "🏢 Searching for buckets in account: $final_account"
+    print_color $BLUE "🔑 Using credentials: $final_role"
     echo ""
     
     # Find ALB log buckets
