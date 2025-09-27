@@ -1,0 +1,19 @@
+{
+  "shared_services": {
+    "account_id": "852998999082",
+    "role_name": "OrganizationAccountAccessRole",
+    "description": "Shared services account for centralized backend resources"
+  },
+  "dev": {
+    "account_id": "221106935066",
+    "role_name": "OrganizationAccountAccessRole"
+  },
+  "staging": {
+    "account_id": "137617557860",
+    "role_name": "OrganizationAccountAccessRole"
+  },
+  "production": {
+    "account_id": "REPLACE_WITH_PRODUCTION_ACCOUNT_ID",
+    "role_name": "OrganizationAccountAccessRole"
+  }
+}
