@@ -76,7 +76,10 @@ check_prerequisites() {
 # Function to find ALB access log buckets
 find_alb_log_buckets() {
     local env=$1
+   
+    print_color $BLUE "🔍 Finding ALB access log buckets for environment: $env"
     
+
     local found_buckets=()
     
     # Get all buckets as JSON and extract names properly
@@ -89,9 +92,11 @@ find_alb_log_buckets() {
             # Pattern 1: Contains env, alb, and access-logs
             if [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"access-logs"* ]]; then
                 found_buckets+=("$bucket")
+
             # Pattern 2: Contains env, alb, and logs (broader match)
             elif [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"log"* ]]; then
                 found_buckets+=("$bucket")
+                print_color $YELLOW "  Found (pattern 2): $bucket"
             fi
         fi
     done < <(echo "$bucket_list" | jq -r '.[]?' 2>/dev/null || true)
@@ -108,6 +113,8 @@ find_alb_log_buckets() {
             # Check if not already in found_buckets array
             if [[ ! " ${found_buckets[@]} " =~ " $specific_bucket " ]]; then
                 found_buckets+=("$specific_bucket")
+
+                print_color $YELLOW "  Found (specific check): $specific_bucket"
             fi
         fi
     done
