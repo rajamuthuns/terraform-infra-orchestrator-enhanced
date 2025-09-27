@@ -83,10 +83,7 @@ check_prerequisites() {
 # Function to find ALB access log buckets
 find_terraform_managed_buckets() {
     local env=$1
-   
-    print_color $BLUE "🔍 Finding ALB access log buckets for environment: $env"
     
-
     local found_buckets=()
     
     print_color $BLUE "🔍 Method 1: Checking Terraform state for managed S3 buckets..."
