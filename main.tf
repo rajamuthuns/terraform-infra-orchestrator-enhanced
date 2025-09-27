@@ -16,7 +16,7 @@ provider "aws" {
   region = var.aws_region
 
   # Cross-account assume role for deployment
-  # Backend operations stay in shared services account
+  # Backend operations stay in org master/shared services account
   # Resource operations assume role in target account
   dynamic "assume_role" {
     for_each = var.account_id != null && var.account_id != "" ? [1] : []
@@ -55,7 +55,7 @@ module "alb" {
   # Optional: Naming context
   namespace   = each.key
   environment = var.environment
-  name        = "${each.value.name}-${var.environment}"
+  name        = each.value.name
 }
 
 # EC2 Module - Elastic Compute Cloud instances
