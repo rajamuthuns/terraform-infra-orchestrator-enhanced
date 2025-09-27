@@ -43,7 +43,7 @@ usage() {
     exit 1
 }
 
-# Function to check prerequisites
+# Function to check prerequisites and show account info
 check_prerequisites() {
     print_color $BLUE "🔍 Checking prerequisites..."
     
@@ -53,11 +53,22 @@ check_prerequisites() {
         exit 1
     fi
     
-    # Check AWS credentials
+    # Check AWS credentials and show account info
     if ! aws sts get-caller-identity &> /dev/null; then
         print_color $RED "❌ Error: AWS CLI is not configured or credentials are invalid"
         exit 1
     fi
+    
+    # Display current AWS context
+    print_color $BLUE "📋 Current AWS Context:"
+    local account_id=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "Unknown")
+    local user_arn=$(aws sts get-caller-identity --query Arn --output text 2>/dev/null || echo "Unknown")
+    local region=$(aws configure get region 2>/dev/null || echo $AWS_DEFAULT_REGION || echo "us-east-1")
+    
+    echo "   Account ID: $account_id"
+    echo "   User/Role: $user_arn"
+    echo "   Region: $region"
+    echo ""
     
     print_color $GREEN "✅ Prerequisites met"
 }
@@ -65,8 +76,6 @@ check_prerequisites() {
 # Function to find ALB access log buckets
 find_alb_log_buckets() {
     local env=$1
-    
-    print_color $BLUE "🔍 Finding ALB access log buckets for environment: $env"
     
     local found_buckets=()
     
@@ -80,11 +89,9 @@ find_alb_log_buckets() {
             # Pattern 1: Contains env, alb, and access-logs
             if [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"access-logs"* ]]; then
                 found_buckets+=("$bucket")
-                print_color $YELLOW "  Found (pattern 1): $bucket"
             # Pattern 2: Contains env, alb, and logs (broader match)
             elif [[ "$bucket" == *"$env"* ]] && [[ "$bucket" == *"alb"* ]] && [[ "$bucket" == *"log"* ]]; then
                 found_buckets+=("$bucket")
-                print_color $YELLOW "  Found (pattern 2): $bucket"
             fi
         fi
     done < <(echo "$bucket_list" | jq -r '.[]?' 2>/dev/null || true)
@@ -101,12 +108,11 @@ find_alb_log_buckets() {
             # Check if not already in found_buckets array
             if [[ ! " ${found_buckets[@]} " =~ " $specific_bucket " ]]; then
                 found_buckets+=("$specific_bucket")
-                print_color $YELLOW "  Found (specific check): $specific_bucket"
             fi
         fi
     done
     
-    # Remove duplicates and return
+    # Remove duplicates and return only bucket names (no colored output)
     printf '%s\n' "${found_buckets[@]}" | sort -u
 }
 
@@ -188,23 +194,48 @@ cleanup_alb_logs() {
     local env=$1
     
     print_color $BLUE "🧹 Starting ALB log cleanup for environment: $env"
+    
+    # Show current account context for debugging
+    local current_account=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "Unknown")
+    print_color $YELLOW "🏢 Running in AWS Account: $current_account"
     echo ""
     
     # Find ALB log buckets
+    print_color $BLUE "🔍 Finding ALB access log buckets for environment: $env"
+    
+    # Show what specific buckets we're looking for
+    print_color $YELLOW "🎯 Looking for bucket patterns:"
+    echo "   - *$env*alb*access-logs*"
+    echo "   - *$env*alb*log*"
+    echo "   - linux-alb-$env-linux-alb-$env-alb-access-logs"
+    echo "   - windows-alb-$env-windows-alb-$env-alb-access-logs"
+    echo ""
+    
     local buckets=($(find_alb_log_buckets "$env"))
     
     if [ ${#buckets[@]} -eq 0 ]; then
-        print_color $GREEN "✅ No ALB access log buckets found for environment: $env"
+        print_color $YELLOW "⚠️  No ALB access log buckets found for environment: $env"
+        print_color $BLUE "🔍 Debug: Showing all S3 buckets in current account for reference:"
+        aws s3 ls | head -10 | while read -r line; do
+            echo "   $line"
+        done
+        local total_buckets=$(aws s3 ls | wc -l)
+        if [ "$total_buckets" -gt 10 ]; then
+            echo "   ... and $((total_buckets - 10)) more buckets"
+        fi
+        echo ""
         print_color $BLUE "ℹ️  This might mean:"
         echo "  - ALB access logging is not enabled"
         echo "  - Buckets use different naming convention"
         echo "  - Buckets are in different AWS account/region"
+        echo "  - Script is running in wrong AWS account"
         return 0
     fi
     
     print_color $BLUE "🎯 Found ALB access log buckets:"
     for bucket in "${buckets[@]}"; do
         echo "  - $bucket"
+        print_color $YELLOW "  Found: $bucket"
     done
     echo ""
     
