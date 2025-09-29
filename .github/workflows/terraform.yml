@@ -1363,6 +1363,7 @@ jobs:
               --title "🗑️ Destroy infrastructure: $SOURCE_ENV → $TARGET_ENV" \
               --base $TARGET_ENV \
               --head $SOURCE_ENV \
+              --body-file - \
               --label "destroy,$TARGET_ENV,infrastructure,automated"
           fi
         env:
