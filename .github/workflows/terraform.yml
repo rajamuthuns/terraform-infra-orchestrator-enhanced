@@ -739,7 +739,10 @@ jobs:
   terraform-destroy:
     name: Terraform Destroy - ${{ needs.determine-environment.outputs.environment }}
     runs-on: ubuntu-latest
+    continue-on-error: true
     needs: [setup-backends, determine-environment, destroy-approval]
+    outputs:
+      destroy_success: ${{ steps.result.outputs.destroy_success }}
     if: |
       always() && 
       needs.destroy-approval.outputs.approved == 'true' &&
@@ -863,6 +866,7 @@ jobs:
           echo "Tfvars file: ${{ needs.determine-environment.outputs.tfvars-file }}"
           echo "This will destroy ALL resources in the ${{ needs.determine-environment.outputs.environment }} environment!"
       - name: Terraform Destroy
+        id: destroy
         run: |
           if [ ! -f tfvars/${{ needs.determine-environment.outputs.tfvars-file }} ]; then
             echo "Error: tfvars file not found: tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
@@ -877,6 +881,18 @@ jobs:
           # Use original tfvars (with dev account ID) so provider assumes role to dev account
           terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
           echo "✅ Terraform destroy completed successfully"
+
+      - name: Set destroy result
+        if: always()
+        id: result
+        run: |
+          if [ "${{ steps.destroy.conclusion }}" = "success" ]; then
+            echo "destroy_success=true" >> $GITHUB_OUTPUT
+            echo "✅ Terraform destroy succeeded"
+          else
+            echo "destroy_success=false" >> $GITHUB_OUTPUT
+            echo "❌ Terraform destroy failed - ALB cleanup will be triggered"
+          fi
   cleanup-and-retry-destroy:
     name: Cleanup ALB Logs and Retry Destroy
     runs-on: ubuntu-latest
@@ -884,7 +900,7 @@ jobs:
     if: |
       always() && 
       needs.destroy-approval.outputs.approved == 'true' &&
-      needs.terraform-destroy.result == 'failure' &&
+      needs.terraform-destroy.outputs.destroy_success == 'false' &&
       github.event_name == 'workflow_dispatch' && 
       github.event.inputs.action == 'destroy'
     outputs:
@@ -1045,6 +1061,8 @@ jobs:
           echo "This will retry destroying ALL resources in the ${{ needs.determine-environment.outputs.environment }} environment!"
 
       - name: Terraform Destroy
+        id: retry-destroy
+        continue-on-error: true
         run: |
           if [ ! -f tfvars/${{ needs.determine-environment.outputs.tfvars-file }} ]; then
             echo "Error: tfvars file not found: tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
@@ -1057,17 +1075,27 @@ jobs:
           echo "📋 Current provider account: $(aws sts get-caller-identity --query Account --output text)"
           
           # Use original tfvars (with dev account ID) so provider assumes role to dev account
-          terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
-          echo "✅ Terraform destroy retry completed successfully"
+          if terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}; then
+            echo "✅ Terraform destroy retry completed successfully"
+            echo "retry_destroy_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Terraform destroy retry failed"
+            echo "retry_destroy_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
       - name: Set retry success output
         id: retry-result
         if: always()
         run: |
-          # Mark as success if the job didn't fail completely
-          # The continue-on-error in force cleanup means the job can still succeed
-          echo "✅ Retry destroy process completed"
-          echo "success=true" >> $GITHUB_OUTPUT
+          # Check if the main retry destroy step succeeded
+          if [ "${{ steps.retry-destroy.outputs.retry_destroy_success }}" = "true" ]; then
+            echo "✅ Retry destroy succeeded"
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Retry destroy failed - checking if force cleanup can help"
+            echo "success=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Force cleanup remaining resources (if retry still fails)
         id: force-cleanup
@@ -1443,10 +1471,107 @@ jobs:
           echo "**Environment:** ${{ steps.promotion.outputs.source_env }}" >> $GITHUB_STEP_SUMMARY
           echo "**Reason:** This is the final environment in the destroy chain" >> $GITHUB_STEP_SUMMARY
 
+  destroy-success-check:
+    name: Determine Destroy Success
+    runs-on: ubuntu-latest
+    needs: [terraform-destroy, cleanup-and-retry-destroy]
+    if: |
+      always() && 
+      (needs.terraform-destroy.result != 'skipped' || needs.cleanup-and-retry-destroy.result != 'skipped')
+    outputs:
+      destroy_successful: ${{ steps.check-destroy.outputs.success }}
+      destroy_message: ${{ steps.check-destroy.outputs.message }}
+    steps:
+      - name: Check destroy operation results
+        id: check-destroy
+        run: |
+          echo "🔍 Checking destroy operation results..."
+          echo "Main destroy result: ${{ needs.terraform-destroy.result }}"
+          echo "Main destroy success: ${{ needs.terraform-destroy.outputs.destroy_success }}"
+          echo "Cleanup retry result: ${{ needs.cleanup-and-retry-destroy.result }}"
+          echo "Cleanup retry success: ${{ needs.cleanup-and-retry-destroy.outputs.retry-success }}"
+          
+          # Scenario 1: First destroy succeeded
+          if [ "${{ needs.terraform-destroy.outputs.destroy_success }}" == "true" ]; then
+            echo "✅ Destroy completed successfully on first attempt"
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "message=Infrastructure destroyed successfully" >> $GITHUB_OUTPUT
+            
+          # Scenario 2: First destroy failed, but retry succeeded  
+          elif [ "${{ needs.terraform-destroy.outputs.destroy_success }}" == "false" ] && [ "${{ needs.cleanup-and-retry-destroy.outputs.retry-success }}" == "true" ]; then
+            echo "✅ Destroy completed successfully after ALB cleanup and retry"
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "message=Infrastructure destroyed successfully after ALB log cleanup" >> $GITHUB_OUTPUT
+            
+          # Scenario 3: Both first destroy and retry failed
+          else
+            echo "❌ Destroy operation failed - resources may still exist"
+            echo "📋 First destroy success: ${{ needs.terraform-destroy.outputs.destroy_success }}"
+            echo "📋 Retry job result: ${{ needs.cleanup-and-retry-destroy.result }}"
+            echo "📋 Retry success: ${{ needs.cleanup-and-retry-destroy.outputs.retry-success }}"
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "message=Infrastructure destroy failed - manual cleanup may be required" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set workflow success status
+        if: steps.check-destroy.outputs.success == 'true'
+        run: |
+          echo "✅ Overall destroy operation was successful"
+          # This step succeeds, which helps mark the overall workflow as successful
+          exit 0
+
+      - name: Set workflow failure status  
+        if: steps.check-destroy.outputs.success == 'false'
+        run: |
+          echo "❌ Overall destroy operation failed"
+          exit 1
+
+  final-status:
+    name: Final Workflow Status
+    runs-on: ubuntu-latest
+    needs: [determine-environment, deploy, promote-infrastructure, terraform-destroy, cleanup-and-retry-destroy, promote-destroy, destroy-success-check]
+    if: always()
+    steps:
+      - name: Determine final workflow status
+        run: |
+          echo "🔍 Determining final workflow status..."
+          
+          # Check if this is a destroy operation
+          if [ "${{ needs.terraform-destroy.result }}" != "skipped" ] || [ "${{ needs.cleanup-and-retry-destroy.result }}" != "skipped" ]; then
+            echo "📋 This is a destroy operation"
+            echo "📋 Destroy success check result: ${{ needs.destroy-success-check.result }}"
+            echo "📋 Destroy successful output: ${{ needs.destroy-success-check.outputs.destroy_successful }}"
+            
+            if [ "${{ needs.destroy-success-check.outputs.destroy_successful }}" = "true" ]; then
+              echo "✅ Destroy operation was successful - marking workflow as successful"
+              exit 0
+            else
+              echo "❌ Destroy operation failed - marking workflow as failed"
+              echo "📋 Resources may still exist and require manual cleanup"
+              exit 1
+            fi
+          fi
+          
+          # Check if this is a deploy operation
+          if [ "${{ needs.deploy.result }}" != "skipped" ]; then
+            echo "📋 This is a deploy operation"
+            if [ "${{ needs.deploy.result }}" = "success" ]; then
+              echo "✅ Deploy operation was successful - marking workflow as successful"
+              exit 0
+            else
+              echo "❌ Deploy operation failed - marking workflow as failed"
+              exit 1
+            fi
+          fi
+          
+          echo "ℹ️ No major operations detected - marking as successful"
+          exit 0
+
   workflow-summary:
     name: Workflow Summary
     runs-on: ubuntu-latest
-    needs: [determine-environment, deploy, promote-infrastructure, terraform-destroy, cleanup-and-retry-destroy, promote-destroy]
+    continue-on-error: true
+    needs: [determine-environment, deploy, promote-infrastructure, terraform-destroy, cleanup-and-retry-destroy, promote-destroy, destroy-success-check, final-status]
     if: |
       always() && 
       (
@@ -1464,19 +1589,49 @@ jobs:
           echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
+          # Handle Deploy Operations
           if [ "${{ needs.deploy.result }}" = "success" ]; then
             echo "✅ **Deploy Status:** Successful" >> $GITHUB_STEP_SUMMARY
-          else
+          elif [ "${{ needs.deploy.result }}" != "skipped" ]; then
             echo "❌ **Deploy Status:** Failed" >> $GITHUB_STEP_SUMMARY
           fi
           
+          # Handle Destroy Operations
+          if [ "${{ needs.destroy-success-check.result }}" != "skipped" ]; then
+            if [ "${{ needs.destroy-success-check.outputs.destroy_successful }}" = "true" ]; then
+              echo "✅ **Destroy Status:** Successful" >> $GITHUB_STEP_SUMMARY
+              echo "📋 **Message:** ${{ needs.destroy-success-check.outputs.destroy_message }}" >> $GITHUB_STEP_SUMMARY
+              
+              # Add details about retry if applicable
+              if [ "${{ needs.terraform-destroy.outputs.destroy_success }}" = "false" ] && [ "${{ needs.cleanup-and-retry-destroy.result }}" = "success" ]; then
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "### 🔄 Recovery Actions Taken:" >> $GITHUB_STEP_SUMMARY
+                echo "- 🧹 ALB access log buckets were cleaned up" >> $GITHUB_STEP_SUMMARY
+                echo "- 🔄 Terraform destroy was retried successfully" >> $GITHUB_STEP_SUMMARY
+                echo "- ✅ All infrastructure has been destroyed" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "❌ **Destroy Status:** Failed" >> $GITHUB_STEP_SUMMARY
+              echo "📋 **Message:** ${{ needs.destroy-success-check.outputs.destroy_message }}" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          # Handle Promotion Operations
           if [ "${{ needs.promote-infrastructure.result }}" = "success" ]; then
             echo "✅ **Promotion Status:** Successful" >> $GITHUB_STEP_SUMMARY
             if [ "${{ needs.promote-infrastructure.outputs.promotion_created }}" = "true" ]; then
               echo "📋 **Next Step:** Review and merge PR: ${{ needs.promote-infrastructure.outputs.source_env }} → ${{ needs.promote-infrastructure.outputs.target_env }}" >> $GITHUB_STEP_SUMMARY
             fi
-          elif [ "${{ needs.promote-infrastructure.result }}" = "skipped" ]; then
-            echo "⏭️ **Promotion Status:** Skipped" >> $GITHUB_STEP_SUMMARY
-          else
+          elif [ "${{ needs.promote-infrastructure.result }}" != "skipped" ]; then
             echo "❌ **Promotion Status:** Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Handle Destroy Promotion Operations
+          if [ "${{ needs.promote-destroy.result }}" = "success" ]; then
+            echo "✅ **Destroy Promotion Status:** Successful" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ needs.promote-destroy.outputs.promotion_created }}" = "true" ]; then
+              echo "📋 **Next Step:** Review and merge destroy PR: ${{ needs.promote-destroy.outputs.source_env }} → ${{ needs.promote-destroy.outputs.target_env }}" >> $GITHUB_STEP_SUMMARY
+            fi
+          elif [ "${{ needs.promote-destroy.result }}" != "skipped" ]; then
+            echo "❌ **Destroy Promotion Status:** Failed" >> $GITHUB_STEP_SUMMARY
           fi
