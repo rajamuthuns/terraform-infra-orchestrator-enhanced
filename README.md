@@ -60,10 +60,9 @@ terraform-infra-orchestrator/
 ├── config/                            # GitOps configuration
 │   ├── aws-accounts.json              # AWS account mappings
 │   └── gitops-environments.json       # Environment-specific settings
-├── shared/                            # Backend configurations
-│   ├── backend-dev.hcl                # Dev backend config
-│   ├── backend-staging.hcl            # Staging backend config
-│   └── backend-prod.hcl               # Production backend config
+├── shared/                            # Common backend configuration
+│   ├── backend-common.hcl             # Common backend config for all environments
+│   └── README.md                      # Backend documentation
 ├── scripts/                           # GitOps setup scripts
 ├── docs/                              # Documentation
 ├── .github/workflows/                 # GitOps CI/CD pipelines
@@ -121,12 +120,11 @@ production branch → Production environment   → tfvars/prod-terraform.tfvars
 git clone <repository-url>
 cd terraform-infra-orchestrator
 
-# Create GitOps branches
-./scripts/create-gitops-branches.sh
+# Configure your shared services account ID
+nano config/aws-accounts.json
 
-# Setup branch protection and environments
-./scripts/setup-branch-protection.sh
-./scripts/setup-github-environments.sh
+# Setup backend resources in shared services account
+./scripts/setup-backend-per-account.sh
 ```
 
 ### 2. Configure Your Infrastructure
@@ -344,10 +342,13 @@ rds_spec = {
 
 ## 🌍 Multi-Environment Management
 
-### **Terraform Workspaces**
-Each environment uses its own workspace for complete isolation:
+### **Common Backend with Workspace Isolation**
+All environments use a single S3 bucket and DynamoDB table with Terraform workspaces for isolation:
 
 ```bash
+# Initialize with common backend (same for all environments)
+terraform init -backend-config=shared/backend-common.hcl
+
 # Development
 terraform workspace select dev || terraform workspace new dev
 terraform apply -var-file=tfvars/dev-terraform.tfvars
@@ -359,6 +360,23 @@ terraform apply -var-file=tfvars/stg-terraform.tfvars
 # Production
 terraform workspace select production || terraform workspace new production
 terraform apply -var-file=tfvars/prod-terraform.tfvars
+```
+
+### **Backend Architecture**
+```
+Shared Services Account (Centralized Backend)
+├── S3 Bucket: terraform-state-central-multi-env
+│   ├── environments/
+│   │   ├── dev/terraform.tfstate
+│   │   ├── staging/terraform.tfstate
+│   │   └── production/terraform.tfstate
+│
+└── DynamoDB Table: terraform-state-locks-common
+
+Environment Accounts (Cross-Account Access)
+├── Dev Account (221106935066) → Accesses shared backend
+├── Staging Account (137617557860) → Accesses shared backend  
+└── Production Account → Accesses shared backend
 ```
 
 ### **Environment-Specific Naming**
@@ -840,8 +858,8 @@ After successful deployment, check the workflow summary for:
 - If still occurring: Run workflow with `setup-only` action first
 
 #### **Backend Configuration Issues:**
-- Check if `shared/backend-{env}.hcl` has placeholder values
-- Run setup stage to update backend configurations
+- Check if `shared/backend-common.hcl` exists and is properly configured
+- Run setup stage to create common backend resources and workspaces
 
 #### **Permission Issues:**
 - Verify AWS credentials in repository secrets
