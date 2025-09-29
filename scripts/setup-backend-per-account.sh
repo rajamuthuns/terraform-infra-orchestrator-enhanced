@@ -231,7 +231,7 @@ setup_common_backend() {
   # Build list of account ARNs for DynamoDB access (similar to S3 but for DynamoDB)
   DYNAMODB_ACCOUNT_ARNS="\"arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:root\""
   
-  # Add environment accounts
+  # Add all accounts (including org_master for pipeline access)
   for env in $(jq -r 'keys[]' "$ACCOUNTS_FILE"); do
     if [ "$env" != "shared_services" ]; then
       account_id=$(jq -r ".${env}.account_id" "$ACCOUNTS_FILE")
