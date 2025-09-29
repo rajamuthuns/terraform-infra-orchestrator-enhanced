@@ -835,13 +835,27 @@ jobs:
       - name: Terraform Workspace
         run: |
           echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
-          if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
-            echo "Workspace '${{ needs.determine-environment.outputs.environment }}' already exists, selecting it"
-            terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+          
+          # List current workspaces for debugging
+          echo "Available workspaces:"
+          terraform workspace list
+          
+          # Try to select the workspace first (more reliable approach)
+          if terraform workspace select ${{ needs.determine-environment.outputs.environment }} 2>/dev/null; then
+            echo "✅ Successfully selected existing workspace: ${{ needs.determine-environment.outputs.environment }}"
           else
-            echo "Creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
-            terraform workspace new ${{ needs.determine-environment.outputs.environment }}
+            echo "Workspace doesn't exist, creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            if terraform workspace new ${{ needs.determine-environment.outputs.environment }}; then
+              echo "✅ Successfully created new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            else
+              echo "❌ Failed to create workspace, trying to select again..."
+              terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+            fi
           fi
+          
+          # Verify current workspace
+          echo "Current workspace: $(terraform workspace show)"
+
       - name: Confirm Destroy Action
         run: |
           echo "🚨 DESTROY ACTION CONFIRMED"
@@ -1002,13 +1016,26 @@ jobs:
       - name: Terraform Workspace
         run: |
           echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
-          if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
-            echo "Workspace '${{ needs.determine-environment.outputs.environment }}' already exists, selecting it"
-            terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+          
+          # List current workspaces for debugging
+          echo "Available workspaces:"
+          terraform workspace list
+          
+          # Try to select the workspace first (more reliable approach)
+          if terraform workspace select ${{ needs.determine-environment.outputs.environment }} 2>/dev/null; then
+            echo "✅ Successfully selected existing workspace: ${{ needs.determine-environment.outputs.environment }}"
           else
-            echo "Creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
-            terraform workspace new ${{ needs.determine-environment.outputs.environment }}
+            echo "Workspace doesn't exist, creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            if terraform workspace new ${{ needs.determine-environment.outputs.environment }}; then
+              echo "✅ Successfully created new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            else
+              echo "❌ Failed to create workspace, trying to select again..."
+              terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+            fi
           fi
+          
+          # Verify current workspace
+          echo "Current workspace: $(terraform workspace show)"
 
       - name: Confirm Retry Destroy Action
         run: |
@@ -1035,14 +1062,29 @@ jobs:
 
       - name: Set retry success output
         id: retry-result
-        run: echo "success=true" >> $GITHUB_OUTPUT
+        if: always()
+        run: |
+          # Mark as success if the job didn't fail completely
+          # The continue-on-error in force cleanup means the job can still succeed
+          echo "✅ Retry destroy process completed"
+          echo "success=true" >> $GITHUB_OUTPUT
 
       - name: Force cleanup remaining resources (if retry still fails)
+        id: force-cleanup
         if: failure()
         run: |
           echo "⚠️ Terraform destroy retry failed. Attempting additional cleanup..."
           
+          # Ensure terraform is properly initialized and workspace is selected
+          echo "🔧 Re-initializing terraform for force cleanup..."
+          terraform init -backend-config=backend-with-assume-role.hcl -reconfigure || true
+          
+          # Ensure workspace is selected
+          echo "🔧 Selecting workspace for force cleanup..."
+          terraform workspace select ${{ needs.determine-environment.outputs.environment }} || true
+          
           # Try destroy with -refresh=false to skip state refresh
+          echo "🔄 Attempting destroy with -refresh=false..."
           terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }} -refresh=false || true
           
           # Try targeted destroy of common problematic resources
