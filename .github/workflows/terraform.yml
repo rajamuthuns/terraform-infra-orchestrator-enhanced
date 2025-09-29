@@ -215,7 +215,7 @@ jobs:
           ACCOUNT_ARNS="${ACCOUNT_ARNS},\"arn:aws:iam::${MASTER_ACCOUNT_ID}:root\""
           echo "  - Added access for master account: $MASTER_ACCOUNT_ID"
           
-          # Add environment accounts from config
+          # Add all accounts from config (including org_master for pipeline access)
           for env in $(jq -r 'keys[]' config/aws-accounts.json); do
             if [ "$env" != "shared_services" ]; then
               account_id=$(jq -r ".${env}.account_id" config/aws-accounts.json)
@@ -865,9 +865,9 @@ jobs:
           echo "🎯 Target Deployment Account: $TARGET_ACCOUNT_ID"
           echo "🔄 Terraform provider will assume role to target account for destroy operations"
           
-          # Use the standard backend config (same as plan/apply)
+          # Use the standard backend config (same as main destroy)
           echo "🔧 Initializing with standard backend configuration..."
-          terraform init -reconfigure -backend-config=shared/backend-common.hcl
+          terraform init -backend-config=shared/backend-common.hcl
           
           # Select workspace with better error handling
           echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
