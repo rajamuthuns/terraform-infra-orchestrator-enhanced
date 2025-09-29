@@ -745,13 +745,35 @@ jobs:
             exit 1
           fi
           
-          echo "🔧 Initializing with backend in shared services account..."
-          terraform init -backend-config=shared/backend-common.hcl
+          # Create backend config with assume_role for shared services account
+          cat > "backend-with-shared-services-role.hcl" << EOF
+          bucket         = "terraform-state-central-multi-env"
+          key            = "terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "terraform-state-locks-common"
+          encrypt        = true
+          workspace_key_prefix = "environments"
           
-          # Store the shared services credentials for subsequent steps
-          echo "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" >> $GITHUB_ENV
-          echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> $GITHUB_ENV
-          echo "AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN" >> $GITHUB_ENV
+          assume_role {
+            role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+            session_name = "terraform-destroy-backend-${{ github.run_id }}"
+          }
+          
+          skip_credentials_validation = false
+          skip_metadata_api_check = false
+          skip_region_validation = false
+          use_path_style = false
+          max_retries = 5
+          EOF
+          
+          # Reset to org master credentials for provider operations
+          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
+          
+          echo "🔧 Initializing with backend assume_role to shared services account..."
+          echo "📋 Provider will use org master credentials: $(aws sts get-caller-identity --query Account --output text)"
+          terraform init -backend-config=backend-with-shared-services-role.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -780,23 +802,12 @@ jobs:
           fi
           
           echo "🗑️ Starting terraform destroy..."
-          echo "📋 Using shared services account for both backend and provider operations"
-          echo "📋 Current account: $(aws sts get-caller-identity --query Account --output text)"
+          echo "📋 Backend: Using shared services account via backend assume_role"
+          echo "📋 Provider: Using org master credentials for cross-account assume role"
+          echo "📋 Current provider account: $(aws sts get-caller-identity --query Account --output text)"
           
-          # Get shared services account ID
-          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
-          
-          # Create a temporary tfvars file with shared services account ID
-          # This prevents the provider from trying to assume role to dev account
-          cp "tfvars/${{ needs.determine-environment.outputs.tfvars-file }}" "tfvars/temp-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
-          sed -i "s/account_id.*=.*/account_id = \"${SHARED_SERVICES_ACCOUNT_ID}\"/" "tfvars/temp-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
-          
-          echo "📋 Using temporary tfvars with shared services account ID for destroy"
-          terraform destroy -auto-approve -var-file="tfvars/temp-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
-          
-          # Clean up temporary file
-          rm -f "tfvars/temp-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
-          
+          # Use original tfvars (with dev account ID) so provider assumes role to dev account
+          terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
           echo "✅ Terraform destroy completed successfully"
   cleanup-and-retry-destroy:
     name: Cleanup ALB Logs and Retry Destroy
@@ -921,13 +932,35 @@ jobs:
             exit 1
           fi
           
-          echo "🔧 Initializing with backend in shared services account..."
-          terraform init -backend-config=shared/backend-common.hcl
+          # Create backend config with assume_role for shared services account
+          cat > "backend-with-shared-services-role.hcl" << EOF
+          bucket         = "terraform-state-central-multi-env"
+          key            = "terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "terraform-state-locks-common"
+          encrypt        = true
+          workspace_key_prefix = "environments"
           
-          # Store the shared services credentials for subsequent operations
-          echo "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" >> $GITHUB_ENV
-          echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> $GITHUB_ENV
-          echo "AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN" >> $GITHUB_ENV
+          assume_role {
+            role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+            session_name = "terraform-retry-destroy-backend-${{ github.run_id }}"
+          }
+          
+          skip_credentials_validation = false
+          skip_metadata_api_check = false
+          skip_region_validation = false
+          use_path_style = false
+          max_retries = 5
+          EOF
+          
+          # Reset to org master credentials for provider operations
+          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
+          
+          echo "🔧 Initializing with backend assume_role to shared services account..."
+          echo "📋 Provider will use org master credentials: $(aws sts get-caller-identity --query Account --output text)"
+          terraform init -backend-config=backend-with-shared-services-role.hcl
           
           # Select workspace with better error handling
           echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
@@ -959,22 +992,12 @@ jobs:
           fi
           
           echo "🗑️ Retrying terraform destroy..."
-          echo "📋 Using shared services account for both backend and provider operations"
-          echo "📋 Current account: $(aws sts get-caller-identity --query Account --output text)"
+          echo "📋 Backend: Using shared services account via backend assume_role"
+          echo "📋 Provider: Using org master credentials for cross-account assume role"
+          echo "📋 Current provider account: $(aws sts get-caller-identity --query Account --output text)"
           
-          # Get shared services account ID
-          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
-          
-          # Create a temporary tfvars file with shared services account ID
-          cp "tfvars/${{ needs.determine-environment.outputs.tfvars-file }}" "tfvars/temp-retry-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
-          sed -i "s/account_id.*=.*/account_id = \"${SHARED_SERVICES_ACCOUNT_ID}\"/" "tfvars/temp-retry-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
-          
-          echo "📋 Using temporary tfvars with shared services account ID for retry destroy"
-          terraform destroy -auto-approve -var-file="tfvars/temp-retry-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
-          
-          # Clean up temporary file
-          rm -f "tfvars/temp-retry-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
-          
+          # Use original tfvars (with dev account ID) so provider assumes role to dev account
+          terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
           echo "✅ Terraform destroy retry completed successfully"
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
