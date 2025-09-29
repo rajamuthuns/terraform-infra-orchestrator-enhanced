@@ -452,14 +452,48 @@ jobs:
           TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "tfvars/${{ needs.determine-environment.outputs.tfvars-file }}" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
           CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           
-          echo "🔧 Using org master credentials for backend access"
-          echo "📋 Org Master Account: $CURRENT_ACCOUNT_ID"
-          echo "🎯 Target Deployment Account: $TARGET_ACCOUNT_ID"
-          echo "🔄 Terraform provider will assume role to target account for resource operations"
+          # Get shared services account ID from config
+          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
           
-          # Use the standard backend config (org master credentials can access shared services backend via bucket policy)
-          echo "🔧 Initializing with standard backend configuration..."
-          terraform init -backend-config=shared/backend-common.hcl
+          echo "🔧 Using two-stage credential approach:"
+          echo "📋 Org Master Account: $CURRENT_ACCOUNT_ID (for provider operations)"
+          echo "🏛️ Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID (for backend access only)"
+          echo "🎯 Target Deployment Account: $TARGET_ACCOUNT_ID"
+          
+          # Create backend configuration with assume_role for shared services account
+          # This allows Terraform to assume the role for backend operations while keeping
+          # org master credentials for provider operations
+          SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          
+          echo "🔧 Creating backend configuration with assume_role for shared services account..."
+          cat > "backend-with-assume-role.hcl" << EOF
+          bucket         = "terraform-state-central-multi-env"
+          key            = "terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "terraform-state-locks-common"
+          encrypt        = true
+          workspace_key_prefix = "environments"
+          
+          assume_role = {
+            role_arn = "${SHARED_SERVICES_ROLE_ARN}"
+            session_name = "terraform-plan-backend-access"
+          }
+          
+          skip_credentials_validation = false
+          skip_metadata_api_check = false
+          skip_region_validation = false
+          use_path_style = false
+          max_retries = 5
+          EOF
+          
+          echo "✅ Backend configuration created with assume_role for shared services account"
+          echo "🔧 This allows:"
+          echo "  - Backend operations: Assume shared services account role for S3/DynamoDB access"
+          echo "  - Provider operations: Use org master credentials to assume target account role"
+          
+          # Initialize with backend assume_role configuration
+          echo "🔧 Initializing with backend assume_role configuration..."
+          terraform init -backend-config=backend-with-assume-role.hcl
           
           # Set up workspace
           if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
@@ -468,7 +502,12 @@ jobs:
             terraform workspace new ${{ needs.determine-environment.outputs.environment }}
           fi
           
-          # Run terraform plan
+          # Run terraform plan with org master credentials
+          # Backend operations will use assume_role to shared services account
+          # Provider operations will use org master credentials to assume target account role
+          echo "🔧 Running terraform plan with org master credentials..."
+          echo "  - Backend: Will assume shared services account role for state/locking"
+          echo "  - Provider: Will assume target deployment account role for resources"
           terraform plan -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }} -out=tfplan
           
           terraform show -no-color tfplan > plan-output.txt
@@ -570,14 +609,43 @@ jobs:
           TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "tfvars/${{ needs.determine-environment.outputs.tfvars-file }}" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
           CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           
-          echo "🔧 Using org master credentials for backend access"
-          echo "📋 Org Master Account: $CURRENT_ACCOUNT_ID"
-          echo "🎯 Target Deployment Account: $TARGET_ACCOUNT_ID"
-          echo "🔄 Terraform provider will assume role to target account for deployment operations"
+          # Get shared services account ID from config
+          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
           
-          # Use the standard backend config (same as plan)
-          echo "🔧 Initializing with standard backend configuration..."
-          terraform init -backend-config=shared/backend-common.hcl
+          echo "🔧 Using backend assume_role approach:"
+          echo "📋 Org Master Account: $CURRENT_ACCOUNT_ID (for provider operations)"
+          echo "🏛️ Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID (for backend access via assume_role)"
+          echo "🎯 Target Deployment Account: $TARGET_ACCOUNT_ID"
+          
+          # Create backend configuration with assume_role for shared services account
+          SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
+          
+          echo "🔧 Creating backend configuration with assume_role for shared services account..."
+          cat > "backend-with-assume-role.hcl" << EOF
+          bucket         = "terraform-state-central-multi-env"
+          key            = "terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "terraform-state-locks-common"
+          encrypt        = true
+          workspace_key_prefix = "environments"
+          
+          assume_role = {
+            role_arn = "${SHARED_SERVICES_ROLE_ARN}"
+            session_name = "terraform-deploy-backend-access"
+          }
+          
+          skip_credentials_validation = false
+          skip_metadata_api_check = false
+          skip_region_validation = false
+          use_path_style = false
+          max_retries = 5
+          EOF
+          
+          echo "✅ Backend configuration created with assume_role for shared services account"
+          
+          # Initialize with backend assume_role configuration
+          echo "🔧 Initializing with backend assume_role configuration..."
+          terraform init -backend-config=backend-with-assume-role.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -592,9 +660,13 @@ jobs:
             echo "Creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
             terraform workspace new ${{ needs.determine-environment.outputs.environment }}
           fi
+
       - name: Terraform Apply
         id: apply
         run: |
+          echo "🔧 Running terraform apply with org master credentials..."
+          echo "  - Backend: Will assume shared services account role for state/locking"
+          echo "  - Provider: Will assume target deployment account role for resources"
           if [ -f tfplan ]; then
             echo "Using existing plan file..."
             terraform apply -auto-approve tfplan
