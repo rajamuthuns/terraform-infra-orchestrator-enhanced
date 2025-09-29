@@ -780,9 +780,23 @@ jobs:
           fi
           
           echo "🗑️ Starting terraform destroy..."
-          echo "📋 Using shared services account credentials for backend operations"
+          echo "📋 Using shared services account for both backend and provider operations"
           echo "📋 Current account: $(aws sts get-caller-identity --query Account --output text)"
-          terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
+          
+          # Get shared services account ID
+          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          
+          # Create a temporary tfvars file with shared services account ID
+          # This prevents the provider from trying to assume role to dev account
+          cp "tfvars/${{ needs.determine-environment.outputs.tfvars-file }}" "tfvars/temp-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
+          sed -i "s/account_id.*=.*/account_id = \"${SHARED_SERVICES_ACCOUNT_ID}\"/" "tfvars/temp-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
+          
+          echo "📋 Using temporary tfvars with shared services account ID for destroy"
+          terraform destroy -auto-approve -var-file="tfvars/temp-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
+          
+          # Clean up temporary file
+          rm -f "tfvars/temp-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
+          
           echo "✅ Terraform destroy completed successfully"
   cleanup-and-retry-destroy:
     name: Cleanup ALB Logs and Retry Destroy
@@ -945,7 +959,22 @@ jobs:
           fi
           
           echo "🗑️ Retrying terraform destroy..."
-          terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
+          echo "📋 Using shared services account for both backend and provider operations"
+          echo "📋 Current account: $(aws sts get-caller-identity --query Account --output text)"
+          
+          # Get shared services account ID
+          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          
+          # Create a temporary tfvars file with shared services account ID
+          cp "tfvars/${{ needs.determine-environment.outputs.tfvars-file }}" "tfvars/temp-retry-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
+          sed -i "s/account_id.*=.*/account_id = \"${SHARED_SERVICES_ACCOUNT_ID}\"/" "tfvars/temp-retry-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
+          
+          echo "📋 Using temporary tfvars with shared services account ID for retry destroy"
+          terraform destroy -auto-approve -var-file="tfvars/temp-retry-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
+          
+          # Clean up temporary file
+          rm -f "tfvars/temp-retry-destroy-${{ needs.determine-environment.outputs.tfvars-file }}"
+          
           echo "✅ Terraform destroy retry completed successfully"
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
