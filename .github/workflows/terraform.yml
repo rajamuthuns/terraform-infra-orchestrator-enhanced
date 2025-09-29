@@ -869,15 +869,28 @@ jobs:
           echo "🔧 Initializing with standard backend configuration..."
           terraform init -reconfigure -backend-config=shared/backend-common.hcl
           
-          # Select workspace
+          # Select workspace with better error handling
           echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
-          if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
-            echo "Workspace '${{ needs.determine-environment.outputs.environment }}' already exists, selecting it"
-            terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+          
+          # List current workspaces for debugging
+          echo "Available workspaces:"
+          terraform workspace list
+          
+          # Try to select the workspace first
+          if terraform workspace select ${{ needs.determine-environment.outputs.environment }} 2>/dev/null; then
+            echo "✅ Successfully selected existing workspace: ${{ needs.determine-environment.outputs.environment }}"
           else
-            echo "Creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
-            terraform workspace new ${{ needs.determine-environment.outputs.environment }}
+            echo "Workspace doesn't exist, creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            if terraform workspace new ${{ needs.determine-environment.outputs.environment }}; then
+              echo "✅ Successfully created new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            else
+              echo "❌ Failed to create workspace, trying to select again..."
+              terraform workspace select ${{ needs.determine-environment.outputs.environment }}
+            fi
           fi
+          
+          # Verify current workspace
+          echo "Current workspace: $(terraform workspace show)"
           
           # Retry destroy
           if [ ! -f tfvars/${{ needs.determine-environment.outputs.tfvars-file }} ]; then
