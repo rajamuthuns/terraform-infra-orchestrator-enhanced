@@ -448,11 +448,6 @@ jobs:
             exit 1
           fi
           
-          # Store original org master credentials
-          ORG_MASTER_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
-          ORG_MASTER_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
-          ORG_MASTER_SESSION_TOKEN="$AWS_SESSION_TOKEN"
-          
           # Get target account from tfvars
           TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "tfvars/${{ needs.determine-environment.outputs.tfvars-file }}" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
           CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -465,29 +460,40 @@ jobs:
           echo "🏛️ Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID (for backend access only)"
           echo "🎯 Target Deployment Account: $TARGET_ACCOUNT_ID"
           
-          # Step 1: Assume role in shared services account for backend access only
+          # Create backend configuration with assume_role for shared services account
+          # This allows Terraform to assume the role for backend operations while keeping
+          # org master credentials for provider operations
           SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
           
-          echo "🔐 Step 1: Assuming role for backend access: $SHARED_SERVICES_ROLE_ARN"
-          if SHARED_CREDENTIALS=$(aws sts assume-role \
-            --role-arn "$SHARED_SERVICES_ROLE_ARN" \
-            --role-session-name "terraform-plan-backend-access" \
-            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-            --output text 2>&1); then
-            
-            export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
-            export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
-            export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
-            echo "✅ Successfully assumed role in shared services account for backend access"
-          else
-            echo "❌ Failed to assume role in shared services account for backend access"
-            echo "Error: $SHARED_CREDENTIALS"
-            exit 1
-          fi
+          echo "🔧 Creating backend configuration with assume_role for shared services account..."
+          cat > "backend-with-assume-role.hcl" << EOF
+          bucket         = "terraform-state-central-multi-env"
+          key            = "terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "terraform-state-locks-common"
+          encrypt        = true
+          workspace_key_prefix = "environments"
           
-          # Initialize with backend access using shared services credentials
-          echo "🔧 Initializing with backend configuration using shared services credentials..."
-          terraform init -backend-config=shared/backend-common.hcl
+          assume_role {
+            role_arn = "${SHARED_SERVICES_ROLE_ARN}"
+            session_name = "terraform-plan-backend-access"
+          }
+          
+          skip_credentials_validation = false
+          skip_metadata_api_check = false
+          skip_region_validation = false
+          use_path_style = false
+          max_retries = 5
+          EOF
+          
+          echo "✅ Backend configuration created with assume_role for shared services account"
+          echo "🔧 This allows:"
+          echo "  - Backend operations: Assume shared services account role for S3/DynamoDB access"
+          echo "  - Provider operations: Use org master credentials to assume target account role"
+          
+          # Initialize with backend assume_role configuration
+          echo "🔧 Initializing with backend assume_role configuration..."
+          terraform init -backend-config=backend-with-assume-role.hcl
           
           # Set up workspace
           if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
@@ -496,18 +502,12 @@ jobs:
             terraform workspace new ${{ needs.determine-environment.outputs.environment }}
           fi
           
-          # Step 2: Restore org master credentials for provider operations
-          echo "🔄 Step 2: Restoring org master credentials for provider operations..."
-          export AWS_ACCESS_KEY_ID="$ORG_MASTER_ACCESS_KEY_ID"
-          export AWS_SECRET_ACCESS_KEY="$ORG_MASTER_SECRET_ACCESS_KEY"
-          export AWS_SESSION_TOKEN="$ORG_MASTER_SESSION_TOKEN"
-          
-          # Verify we're back to org master account
-          CURRENT_ACCOUNT_CHECK=$(aws sts get-caller-identity --query Account --output text)
-          echo "✅ Using org master credentials for provider operations: $CURRENT_ACCOUNT_CHECK"
-          
-          # Run terraform plan (provider will assume role to target account via main.tf configuration)
-          echo "🔧 Running terraform plan with org master credentials (provider will assume target account role)..."
+          # Run terraform plan with org master credentials
+          # Backend operations will use assume_role to shared services account
+          # Provider operations will use org master credentials to assume target account role
+          echo "🔧 Running terraform plan with org master credentials..."
+          echo "  - Backend: Will assume shared services account role for state/locking"
+          echo "  - Provider: Will assume target deployment account role for resources"
           terraform plan -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }} -out=tfplan
           
           terraform show -no-color tfplan > plan-output.txt
@@ -605,11 +605,6 @@ jobs:
           echo "🏢 Environment isolation will be handled by workspace: ${{ needs.determine-environment.outputs.environment }}"
       - name: Terraform Init
         run: |
-          # Store original org master credentials
-          ORG_MASTER_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
-          ORG_MASTER_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
-          ORG_MASTER_SESSION_TOKEN="$AWS_SESSION_TOKEN"
-          
           # Get target account from tfvars
           TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "tfvars/${{ needs.determine-environment.outputs.tfvars-file }}" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
           CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -617,39 +612,40 @@ jobs:
           # Get shared services account ID from config
           SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
           
-          echo "🔧 Using two-stage credential approach:"
+          echo "🔧 Using backend assume_role approach:"
           echo "📋 Org Master Account: $CURRENT_ACCOUNT_ID (for provider operations)"
-          echo "🏛️ Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID (for backend access only)"
+          echo "🏛️ Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID (for backend access via assume_role)"
           echo "🎯 Target Deployment Account: $TARGET_ACCOUNT_ID"
           
-          # Step 1: Assume role in shared services account for backend access only
+          # Create backend configuration with assume_role for shared services account
           SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
           
-          echo "🔐 Step 1: Assuming role for backend access: $SHARED_SERVICES_ROLE_ARN"
-          if SHARED_CREDENTIALS=$(aws sts assume-role \
-            --role-arn "$SHARED_SERVICES_ROLE_ARN" \
-            --role-session-name "terraform-deploy-backend-access" \
-            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-            --output text 2>&1); then
-            
-            export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
-            export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
-            export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
-            echo "✅ Successfully assumed role in shared services account for backend access"
-          else
-            echo "❌ Failed to assume role in shared services account for backend access"
-            echo "Error: $SHARED_CREDENTIALS"
-            exit 1
-          fi
+          echo "🔧 Creating backend configuration with assume_role for shared services account..."
+          cat > "backend-with-assume-role.hcl" << EOF
+          bucket         = "terraform-state-central-multi-env"
+          key            = "terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "terraform-state-locks-common"
+          encrypt        = true
+          workspace_key_prefix = "environments"
           
-          # Initialize with backend access using shared services credentials
-          echo "🔧 Initializing with backend configuration using shared services credentials..."
-          terraform init -backend-config=shared/backend-common.hcl
+          assume_role {
+            role_arn = "${SHARED_SERVICES_ROLE_ARN}"
+            session_name = "terraform-deploy-backend-access"
+          }
           
-          # Store org master credentials for next steps
-          echo "ORG_MASTER_ACCESS_KEY_ID=$ORG_MASTER_ACCESS_KEY_ID" >> $GITHUB_ENV
-          echo "ORG_MASTER_SECRET_ACCESS_KEY=$ORG_MASTER_SECRET_ACCESS_KEY" >> $GITHUB_ENV
-          echo "ORG_MASTER_SESSION_TOKEN=$ORG_MASTER_SESSION_TOKEN" >> $GITHUB_ENV
+          skip_credentials_validation = false
+          skip_metadata_api_check = false
+          skip_region_validation = false
+          use_path_style = false
+          max_retries = 5
+          EOF
+          
+          echo "✅ Backend configuration created with assume_role for shared services account"
+          
+          # Initialize with backend assume_role configuration
+          echo "🔧 Initializing with backend assume_role configuration..."
+          terraform init -backend-config=backend-with-assume-role.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -665,27 +661,12 @@ jobs:
             terraform workspace new ${{ needs.determine-environment.outputs.environment }}
           fi
 
-      - name: Restore Org Master Credentials
-        run: |
-          # Step 2: Restore org master credentials for provider operations
-          echo "🔄 Step 2: Restoring org master credentials for provider operations..."
-          export AWS_ACCESS_KEY_ID="$ORG_MASTER_ACCESS_KEY_ID"
-          export AWS_SECRET_ACCESS_KEY="$ORG_MASTER_SECRET_ACCESS_KEY"
-          export AWS_SESSION_TOKEN="$ORG_MASTER_SESSION_TOKEN"
-          
-          # Verify we're back to org master account
-          CURRENT_ACCOUNT_CHECK=$(aws sts get-caller-identity --query Account --output text)
-          echo "✅ Using org master credentials for provider operations: $CURRENT_ACCOUNT_CHECK"
-          
-          # Export for subsequent steps
-          echo "AWS_ACCESS_KEY_ID=$ORG_MASTER_ACCESS_KEY_ID" >> $GITHUB_ENV
-          echo "AWS_SECRET_ACCESS_KEY=$ORG_MASTER_SECRET_ACCESS_KEY" >> $GITHUB_ENV
-          echo "AWS_SESSION_TOKEN=$ORG_MASTER_SESSION_TOKEN" >> $GITHUB_ENV
-
       - name: Terraform Apply
         id: apply
         run: |
-          echo "🔧 Running terraform apply with org master credentials (provider will assume target account role)..."
+          echo "🔧 Running terraform apply with org master credentials..."
+          echo "  - Backend: Will assume shared services account role for state/locking"
+          echo "  - Provider: Will assume target deployment account role for resources"
           if [ -f tfplan ]; then
             echo "Using existing plan file..."
             terraform apply -auto-approve tfplan
