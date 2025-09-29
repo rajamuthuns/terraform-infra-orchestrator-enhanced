@@ -786,39 +786,24 @@ jobs:
 
       - name: Terraform Init
         run: |
-          # Get shared services account from config
-          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
-          
           # Get target account from tfvars
           TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "tfvars/${{ needs.determine-environment.outputs.tfvars-file }}" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
           CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           
-          echo "🔧 Backend access requires shared services account credentials"
-          echo "📋 Org Master Account: $CURRENT_ACCOUNT_ID"
-          echo "📋 Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID"
+          # Get shared services account ID from config
+          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          
+          echo "🔧 Using backend assume_role approach:"
+          echo "📋 Org Master Account: $CURRENT_ACCOUNT_ID (for provider operations)"
+          echo "🏛️ Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID (for backend access via assume_role)"
           echo "🎯 Target Deployment Account: $TARGET_ACCOUNT_ID"
           
-          # Assume role in shared services account for backend access (same as setup)
+          # Create backend configuration with assume_role for shared services account
+          # Use same filename as plan/deploy jobs to avoid "Backend configuration changed" error
           SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
-          echo "🔐 Assuming role in shared services account: $SHARED_SERVICES_ROLE_ARN"
           
-          if SHARED_CREDENTIALS=$(aws sts assume-role \
-            --role-arn "$SHARED_SERVICES_ROLE_ARN" \
-            --role-session-name "terraform-destroy-backend-${{ github.run_id }}" \
-            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-            --output text 2>&1); then
-            
-            export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
-            export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
-            export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
-            echo "✅ Successfully assumed role in shared services account for backend access"
-          else
-            echo "❌ Failed to assume role in shared services account: $SHARED_CREDENTIALS"
-            exit 1
-          fi
-          
-          # Create backend config with assume_role for shared services account
-          cat > "backend-with-shared-services-role.hcl" << EOF
+          echo "🔧 Creating backend configuration with assume_role for shared services account..."
+          cat > "backend-with-assume-role.hcl" << EOF
           bucket         = "terraform-state-central-multi-env"
           key            = "terraform.tfstate"
           region         = "us-east-1"
@@ -827,8 +812,8 @@ jobs:
           workspace_key_prefix = "environments"
           
           assume_role = {
-            role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
-            session_name = "terraform-destroy-backend-${{ github.run_id }}"
+            role_arn = "${SHARED_SERVICES_ROLE_ARN}"
+            session_name = "terraform-destroy-backend-access"
           }
           
           skip_credentials_validation = false
@@ -838,14 +823,11 @@ jobs:
           max_retries = 5
           EOF
           
-          # Reset to org master credentials for provider operations
-          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
-          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
-          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
+          echo "✅ Backend configuration created with assume_role for shared services account"
           
-          echo "🔧 Initializing with backend assume_role to shared services account..."
-          echo "📋 Provider will use org master credentials: $(aws sts get-caller-identity --query Account --output text)"
-          terraform init -backend-config=backend-with-shared-services-role.hcl
+          # Initialize with backend assume_role configuration
+          echo "🔧 Initializing with backend assume_role configuration..."
+          terraform init -backend-config=backend-with-assume-role.hcl
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -969,43 +951,26 @@ jobs:
           done
           
           echo "✅ Additional ALB bucket cleanup completed"
-      - name: Retry Terraform Destroy
+      - name: Terraform Init
         run: |
-          echo "🔄 Retrying Terraform destroy after ALB log cleanup..."
-          
-          # Get shared services account from config
-          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
-          
           # Get target account from tfvars
           TARGET_ACCOUNT_ID=$(grep -E '^account_id\s*=' "tfvars/${{ needs.determine-environment.outputs.tfvars-file }}" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d ' ')
           CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           
-          echo "� Bacrkend access requires shared services account credentials"
-          echo "📋 Org Master Account: $CURRENT_ACCOUNT_ID"
-          echo "📋 Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID"
+          # Get shared services account ID from config
+          SHARED_SERVICES_ACCOUNT_ID=$(jq -r '.shared_services.account_id' config/aws-accounts.json)
+          
+          echo "🔧 Using backend assume_role approach:"
+          echo "📋 Org Master Account: $CURRENT_ACCOUNT_ID (for provider operations)"
+          echo "🏛️ Shared Services Account: $SHARED_SERVICES_ACCOUNT_ID (for backend access via assume_role)"
           echo "🎯 Target Deployment Account: $TARGET_ACCOUNT_ID"
           
-          # Assume role in shared services account for backend access (same as main destroy)
+          # Create backend configuration with assume_role for shared services account
+          # Use same filename as plan/deploy jobs to avoid "Backend configuration changed" error
           SHARED_SERVICES_ROLE_ARN="arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
-          echo "🔐 Assuming role in shared services account: $SHARED_SERVICES_ROLE_ARN"
           
-          if SHARED_CREDENTIALS=$(aws sts assume-role \
-            --role-arn "$SHARED_SERVICES_ROLE_ARN" \
-            --role-session-name "terraform-retry-destroy-backend-${{ github.run_id }}" \
-            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
-            --output text 2>&1); then
-            
-            export AWS_ACCESS_KEY_ID=$(echo $SHARED_CREDENTIALS | cut -d' ' -f1)
-            export AWS_SECRET_ACCESS_KEY=$(echo $SHARED_CREDENTIALS | cut -d' ' -f2)
-            export AWS_SESSION_TOKEN=$(echo $SHARED_CREDENTIALS | cut -d' ' -f3)
-            echo "✅ Successfully assumed role in shared services account for backend access"
-          else
-            echo "❌ Failed to assume role in shared services account: $SHARED_CREDENTIALS"
-            exit 1
-          fi
-          
-          # Create backend config with assume_role for shared services account
-          cat > "backend-with-shared-services-role.hcl" << EOF
+          echo "🔧 Creating backend configuration with assume_role for shared services account..."
+          cat > "backend-with-assume-role.hcl" << EOF
           bucket         = "terraform-state-central-multi-env"
           key            = "terraform.tfstate"
           region         = "us-east-1"
@@ -1014,8 +979,8 @@ jobs:
           workspace_key_prefix = "environments"
           
           assume_role = {
-            role_arn = "arn:aws:iam::${SHARED_SERVICES_ACCOUNT_ID}:role/OrganizationAccountAccessRole"
-            session_name = "terraform-retry-destroy-backend-${{ github.run_id }}"
+            role_arn = "${SHARED_SERVICES_ROLE_ARN}"
+            session_name = "terraform-retry-destroy-backend-access"
           }
           
           skip_credentials_validation = false
@@ -1025,39 +990,35 @@ jobs:
           max_retries = 5
           EOF
           
-          # Reset to org master credentials for provider operations
-          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
-          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
-          export AWS_SESSION_TOKEN="${{ secrets.AWS_SESSION_TOKEN }}"
+          echo "✅ Backend configuration created with assume_role for shared services account"
           
-          echo "🔧 Initializing with backend assume_role to shared services account..."
-          echo "📋 Provider will use org master credentials: $(aws sts get-caller-identity --query Account --output text)"
-          terraform init -backend-config=backend-with-shared-services-role.hcl
-          
-          # Select workspace with better error handling
+          # Initialize with backend assume_role configuration
+          echo "🔧 Initializing with backend assume_role configuration..."
+          terraform init -backend-config=backend-with-assume-role.hcl -reconfigure
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Terraform Workspace
+        run: |
           echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
-          
-          # List current workspaces for debugging
-          echo "Available workspaces:"
-          terraform workspace list
-          
-          # Try to select the workspace first
-          if terraform workspace select ${{ needs.determine-environment.outputs.environment }} 2>/dev/null; then
-            echo "✅ Successfully selected existing workspace: ${{ needs.determine-environment.outputs.environment }}"
+          if terraform workspace list | grep -q "^\s*${{ needs.determine-environment.outputs.environment }}\s*$"; then
+            echo "Workspace '${{ needs.determine-environment.outputs.environment }}' already exists, selecting it"
+            terraform workspace select ${{ needs.determine-environment.outputs.environment }}
           else
-            echo "Workspace doesn't exist, creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
-            if terraform workspace new ${{ needs.determine-environment.outputs.environment }}; then
-              echo "✅ Successfully created new workspace: ${{ needs.determine-environment.outputs.environment }}"
-            else
-              echo "❌ Failed to create workspace, trying to select again..."
-              terraform workspace select ${{ needs.determine-environment.outputs.environment }}
-            fi
+            echo "Creating new workspace: ${{ needs.determine-environment.outputs.environment }}"
+            terraform workspace new ${{ needs.determine-environment.outputs.environment }}
           fi
-          
-          # Verify current workspace
-          echo "Current workspace: $(terraform workspace show)"
-          
-          # Retry destroy
+
+      - name: Confirm Retry Destroy Action
+        run: |
+          echo "🔄 RETRY DESTROY ACTION CONFIRMED"
+          echo "Environment: ${{ needs.determine-environment.outputs.environment }}"
+          echo "Tfvars file: ${{ needs.determine-environment.outputs.tfvars-file }}"
+          echo "This will retry destroying ALL resources in the ${{ needs.determine-environment.outputs.environment }} environment!"
+
+      - name: Terraform Destroy
+        run: |
           if [ ! -f tfvars/${{ needs.determine-environment.outputs.tfvars-file }} ]; then
             echo "Error: tfvars file not found: tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
             exit 1
@@ -1071,9 +1032,6 @@ jobs:
           # Use original tfvars (with dev account ID) so provider assumes role to dev account
           terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
           echo "✅ Terraform destroy retry completed successfully"
-        env:
-          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
-          GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
 
       - name: Set retry success output
         id: retry-result
@@ -1306,10 +1264,133 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ steps.promotion.outputs.source_env }}" >> $GITHUB_STEP_SUMMARY
           echo "**Reason:** This is the final environment in the promotion chain" >> $GITHUB_STEP_SUMMARY
+  promote-destroy:
+    name: Promote Destroy to Next Environment
+    runs-on: ubuntu-latest
+    needs: [determine-environment, terraform-destroy, cleanup-and-retry-destroy]
+    if: |
+      always() && 
+      (
+        (needs.terraform-destroy.result == 'success') ||
+        (needs.cleanup-and-retry-destroy.result == 'success' && needs.cleanup-and-retry-destroy.outputs.retry-success == 'true')
+      ) &&
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'destroy'
+    outputs:
+      promotion_created: ${{ steps.promotion.outputs.skip_promotion == 'false' }}
+      source_env: ${{ steps.promotion.outputs.source_env }}
+      target_env: ${{ steps.promotion.outputs.target_env }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Git
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+      - name: Determine destroy promotion target
+        id: promotion
+        run: |
+          SOURCE_ENV="${{ needs.determine-environment.outputs.environment }}"
+          
+          case $SOURCE_ENV in
+            "dev") TARGET_ENV="staging" ;;
+            "staging") TARGET_ENV="production" ;;
+            "production") TARGET_ENV="" ;;
+            *) TARGET_ENV="" ;;
+          esac
+          
+          echo "source_env=$SOURCE_ENV" >> $GITHUB_OUTPUT
+          echo "target_env=$TARGET_ENV" >> $GITHUB_OUTPUT
+          
+          if [ -z "$TARGET_ENV" ]; then
+            echo "No destroy promotion target for $SOURCE_ENV environment"
+            echo "skip_promotion=true" >> $GITHUB_OUTPUT
+          else
+            echo "Destroy Promotion: $SOURCE_ENV → $TARGET_ENV"
+            echo "skip_promotion=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create destroy promotion PR
+        if: steps.promotion.outputs.skip_promotion == 'false'
+        run: |
+          SOURCE_ENV="${{ steps.promotion.outputs.source_env }}"
+          TARGET_ENV="${{ steps.promotion.outputs.target_env }}"
+          
+          PR_BODY="## 🗑️ Infrastructure Destroy Promotion
+
+          **Source Environment:** $SOURCE_ENV (✅ Successfully Destroyed)
+          **Target Environment:** $TARGET_ENV (⏳ Pending Destroy)
+          **Action:** Destroy infrastructure in $TARGET_ENV environment
+
+          ### 🚨 Destroy Summary for $SOURCE_ENV
+          - ✅ Infrastructure successfully destroyed
+          - 🧹 ALB access log buckets cleaned up
+          - 🗄️ Terraform state preserved
+          - 🔒 Backend resources maintained
+
+          ### ⚠️ What will happen in $TARGET_ENV:
+          - 🗑️ All EC2 instances will be destroyed
+          - 🗑️ All Load Balancers will be destroyed  
+          - 🗑️ All associated resources will be destroyed
+          - 🔒 Terraform state will be preserved
+
+          ### 📋 Next Steps:
+          1. Review this PR carefully
+          2. Merge this PR to trigger destroy in $TARGET_ENV
+          3. Approve the destroy operation when prompted
+          4. Monitor the destroy process
+
+          **⚠️ WARNING: This action cannot be undone!**
+
+          ---
+          *This PR was automatically created after successful destroy of $SOURCE_ENV environment.*"
+
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list --base $TARGET_ENV --head $SOURCE_ENV --json number --jq '.[0].number' 2>/dev/null || echo "")
+          
+          if [ -n "$EXISTING_PR" ]; then
+            echo "PR already exists: #$EXISTING_PR"
+            echo "Updating existing PR..."
+            echo "$PR_BODY" | gh pr edit $EXISTING_PR --title "🗑️ Destroy infrastructure: $SOURCE_ENV → $TARGET_ENV" --body-file -
+          else
+            echo "Creating new destroy promotion PR..."
+            echo "$PR_BODY" | gh pr create \
+              --title "🗑️ Destroy infrastructure: $SOURCE_ENV → $TARGET_ENV" \
+              --base $TARGET_ENV \
+              --head $SOURCE_ENV \
+              --label "destroy,$TARGET_ENV,infrastructure,automated"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+
+      - name: Add destroy promotion summary
+        if: steps.promotion.outputs.skip_promotion == 'false'
+        run: |
+          echo "## 🗑️ Destroy Promotion Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Source Environment:** ${{ steps.promotion.outputs.source_env }} (✅ Destroyed)" >> $GITHUB_STEP_SUMMARY
+          echo "**Target Environment:** ${{ steps.promotion.outputs.target_env }} (⏳ Pending)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Status:** Destroy promotion PR created successfully" >> $GITHUB_STEP_SUMMARY
+          echo "📋 **Next Step:** Review and merge the PR to destroy ${{ steps.promotion.outputs.target_env }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: No destroy promotion needed
+        if: steps.promotion.outputs.skip_promotion == 'true'
+        run: |
+          echo "## ℹ️ No Destroy Promotion Available" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ steps.promotion.outputs.source_env }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason:** This is the final environment in the destroy chain" >> $GITHUB_STEP_SUMMARY
+
   workflow-summary:
     name: Workflow Summary
     runs-on: ubuntu-latest
-    needs: [determine-environment, deploy, promote-infrastructure, terraform-destroy, cleanup-and-retry-destroy]
+    needs: [determine-environment, deploy, promote-infrastructure, terraform-destroy, cleanup-and-retry-destroy, promote-destroy]
     if: |
       always() && 
       (
