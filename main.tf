@@ -16,22 +16,31 @@ provider "aws" {
   region = var.aws_region
 
   # Cross-account assume role for deployment
-  # Backend operations stay in org master/shared services account
-  # Resource operations assume role in target account
+  # Credential flow:
+  # 1. Workflow uses org master account (345918514280) credentials
+  # 2. Backend operations: workflow assumes shared services account (852998999082) role for state/locking
+  # 3. Provider operations: provider assumes target deployment account role (if different from org master)
   dynamic "assume_role" {
-    for_each = var.account_id != null && var.account_id != "" ? [1] : []
+    for_each = var.account_id != null && var.account_id != "" && var.account_id != "345918514280" ? [1] : []
     content {
       role_arn     = "arn:aws:iam::${var.account_id}:role/OrganizationAccountAccessRole"
       session_name = "terraform-deployment-${var.environment}"
     }
   }
 
+  # Ensure proper credential handling
+  skip_credentials_validation = false
+  skip_metadata_api_check     = false
+  skip_region_validation      = false
+
   default_tags {
     tags = {
-      Environment = var.environment
-      Project     = var.project_name
-      ManagedBy   = "terraform"
-      Workspace   = terraform.workspace
+      Environment   = var.environment
+      Project       = var.project_name
+      ManagedBy     = "terraform"
+      Workspace     = terraform.workspace
+      OrgMaster     = "345918514280"
+      TargetAccount = var.account_id
     }
   }
 }
@@ -77,7 +86,7 @@ module "ec2_instance" {
   # OS-specific configurations
   root_volume_size       = try(each.value.root_volume_size, try(each.value.os_type, "linux") == "windows" ? 50 : 20)
   additional_ebs_volumes = try(each.value.additional_ebs_volumes, [])
-  
+
   # ALB Integration - Connect to ALB target groups
   enable_alb_integration = try(each.value.enable_alb_integration, false)
   alb_target_group_arns  = try(each.value.enable_alb_integration, false) ? [module.alb[each.value.alb_name].default_target_group_arn] : []
