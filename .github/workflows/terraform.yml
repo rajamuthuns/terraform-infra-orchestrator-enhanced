@@ -747,6 +747,11 @@ jobs:
           
           echo "🔧 Initializing with backend in shared services account..."
           terraform init -backend-config=shared/backend-common.hcl
+          
+          # Store the shared services credentials for subsequent steps
+          echo "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN" >> $GITHUB_ENV
         env:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           GIT_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
@@ -775,6 +780,8 @@ jobs:
           fi
           
           echo "🗑️ Starting terraform destroy..."
+          echo "📋 Using shared services account credentials for backend operations"
+          echo "📋 Current account: $(aws sts get-caller-identity --query Account --output text)"
           terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
           echo "✅ Terraform destroy completed successfully"
   cleanup-and-retry-destroy:
@@ -902,6 +909,11 @@ jobs:
           
           echo "🔧 Initializing with backend in shared services account..."
           terraform init -backend-config=shared/backend-common.hcl
+          
+          # Store the shared services credentials for subsequent operations
+          echo "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN" >> $GITHUB_ENV
           
           # Select workspace with better error handling
           echo "Setting up workspace: ${{ needs.determine-environment.outputs.environment }}"
