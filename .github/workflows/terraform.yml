@@ -739,6 +739,7 @@ jobs:
   terraform-destroy:
     name: Terraform Destroy - ${{ needs.determine-environment.outputs.environment }}
     runs-on: ubuntu-latest
+    continue-on-error: true
     needs: [setup-backends, determine-environment, destroy-approval]
     outputs:
       destroy_success: ${{ steps.result.outputs.destroy_success }}
@@ -899,7 +900,7 @@ jobs:
     if: |
       always() && 
       needs.destroy-approval.outputs.approved == 'true' &&
-      (needs.terraform-destroy.result == 'failure' || needs.terraform-destroy.outputs.destroy_success == 'false') &&
+      needs.terraform-destroy.outputs.destroy_success == 'false' &&
       github.event_name == 'workflow_dispatch' && 
       github.event.inputs.action == 'destroy'
     outputs:
@@ -1060,6 +1061,8 @@ jobs:
           echo "This will retry destroying ALL resources in the ${{ needs.determine-environment.outputs.environment }} environment!"
 
       - name: Terraform Destroy
+        id: retry-destroy
+        continue-on-error: true
         run: |
           if [ ! -f tfvars/${{ needs.determine-environment.outputs.tfvars-file }} ]; then
             echo "Error: tfvars file not found: tfvars/${{ needs.determine-environment.outputs.tfvars-file }}"
@@ -1072,17 +1075,27 @@ jobs:
           echo "📋 Current provider account: $(aws sts get-caller-identity --query Account --output text)"
           
           # Use original tfvars (with dev account ID) so provider assumes role to dev account
-          terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}
-          echo "✅ Terraform destroy retry completed successfully"
+          if terraform destroy -auto-approve -var-file=tfvars/${{ needs.determine-environment.outputs.tfvars-file }}; then
+            echo "✅ Terraform destroy retry completed successfully"
+            echo "retry_destroy_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Terraform destroy retry failed"
+            echo "retry_destroy_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
       - name: Set retry success output
         id: retry-result
         if: always()
         run: |
-          # Mark as success if the job didn't fail completely
-          # The continue-on-error in force cleanup means the job can still succeed
-          echo "✅ Retry destroy process completed"
-          echo "success=true" >> $GITHUB_OUTPUT
+          # Check if the main retry destroy step succeeded
+          if [ "${{ steps.retry-destroy.outputs.retry_destroy_success }}" = "true" ]; then
+            echo "✅ Retry destroy succeeded"
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Retry destroy failed - checking if force cleanup can help"
+            echo "success=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Force cleanup remaining resources (if retry still fails)
         id: force-cleanup
@@ -1474,19 +1487,28 @@ jobs:
         run: |
           echo "🔍 Checking destroy operation results..."
           echo "Main destroy result: ${{ needs.terraform-destroy.result }}"
+          echo "Main destroy success: ${{ needs.terraform-destroy.outputs.destroy_success }}"
           echo "Cleanup retry result: ${{ needs.cleanup-and-retry-destroy.result }}"
           echo "Cleanup retry success: ${{ needs.cleanup-and-retry-destroy.outputs.retry-success }}"
           
+          # Scenario 1: First destroy succeeded
           if [ "${{ needs.terraform-destroy.outputs.destroy_success }}" == "true" ]; then
             echo "✅ Destroy completed successfully on first attempt"
             echo "success=true" >> $GITHUB_OUTPUT
             echo "message=Infrastructure destroyed successfully" >> $GITHUB_OUTPUT
-          elif [ "${{ needs.cleanup-and-retry-destroy.result }}" == "success" ] && [ "${{ needs.cleanup-and-retry-destroy.outputs.retry-success }}" == "true" ]; then
+            
+          # Scenario 2: First destroy failed, but retry succeeded  
+          elif [ "${{ needs.terraform-destroy.outputs.destroy_success }}" == "false" ] && [ "${{ needs.cleanup-and-retry-destroy.outputs.retry-success }}" == "true" ]; then
             echo "✅ Destroy completed successfully after ALB cleanup and retry"
             echo "success=true" >> $GITHUB_OUTPUT
             echo "message=Infrastructure destroyed successfully after ALB log cleanup" >> $GITHUB_OUTPUT
+            
+          # Scenario 3: Both first destroy and retry failed
           else
-            echo "❌ Destroy operation failed"
+            echo "❌ Destroy operation failed - resources may still exist"
+            echo "📋 First destroy success: ${{ needs.terraform-destroy.outputs.destroy_success }}"
+            echo "📋 Retry job result: ${{ needs.cleanup-and-retry-destroy.result }}"
+            echo "📋 Retry success: ${{ needs.cleanup-and-retry-destroy.outputs.retry-success }}"
             echo "success=false" >> $GITHUB_OUTPUT
             echo "message=Infrastructure destroy failed - manual cleanup may be required" >> $GITHUB_OUTPUT
           fi
@@ -1517,11 +1539,15 @@ jobs:
           # Check if this is a destroy operation
           if [ "${{ needs.terraform-destroy.result }}" != "skipped" ] || [ "${{ needs.cleanup-and-retry-destroy.result }}" != "skipped" ]; then
             echo "📋 This is a destroy operation"
+            echo "📋 Destroy success check result: ${{ needs.destroy-success-check.result }}"
+            echo "📋 Destroy successful output: ${{ needs.destroy-success-check.outputs.destroy_successful }}"
+            
             if [ "${{ needs.destroy-success-check.outputs.destroy_successful }}" = "true" ]; then
               echo "✅ Destroy operation was successful - marking workflow as successful"
               exit 0
             else
               echo "❌ Destroy operation failed - marking workflow as failed"
+              echo "📋 Resources may still exist and require manual cleanup"
               exit 1
             fi
           fi
