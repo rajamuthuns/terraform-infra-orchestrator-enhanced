@@ -35,7 +35,6 @@ Error: resource already exists
 # Import existing resource
 terraform import aws_instance.example i-1234567890abcdef0
 
-# Or rename the resource in Terraform
 # Or delete the existing resource manually
 ```
 
