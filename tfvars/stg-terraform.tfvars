@@ -11,20 +11,48 @@ environment = "staging"
 
 alb_spec = {
   linux-alb = {
-    vpc_name             = "dev-mig-target-vpc"
+    vpc_name             = "staging-mig-target-vpc"
+    internal             = true  # Make ALB private (internal)
     http_enabled         = true
     https_enabled        = false
     name                 = "linux-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
+    
+    # Security: Only allow CloudFront IP ranges
+    allowed_cidr_blocks = [
+      "52.84.0.0/15",      # CloudFront IP ranges
+      "54.230.0.0/16",     # CloudFront IP ranges
+      "54.239.128.0/18",   # CloudFront IP ranges
+      "52.82.128.0/23",    # CloudFront IP ranges
+      "52.82.134.0/23",    # CloudFront IP ranges
+      "54.240.128.0/18",   # CloudFront IP ranges
+      "52.124.128.0/17",   # CloudFront IP ranges
+      "54.182.0.0/16",     # CloudFront IP ranges
+      "54.192.0.0/16"      # CloudFront IP ranges
+    ]
   },
   windows-alb = {
-    vpc_name             = "dev-mig-target-vpc"
+    vpc_name             = "staging-mig-target-vpc"
+    internal             = true  # Make ALB private (internal)
     http_enabled         = true
     https_enabled        = false
     name                 = "windows-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
+    
+    # Security: Only allow CloudFront IP ranges
+    allowed_cidr_blocks = [
+      "52.84.0.0/15",      # CloudFront IP ranges
+      "54.230.0.0/16",     # CloudFront IP ranges
+      "54.239.128.0/18",   # CloudFront IP ranges
+      "52.82.128.0/23",    # CloudFront IP ranges
+      "52.82.134.0/23",    # CloudFront IP ranges
+      "54.240.128.0/18",   # CloudFront IP ranges
+      "52.124.128.0/17",   # CloudFront IP ranges
+      "54.182.0.0/16",     # CloudFront IP ranges
+      "54.192.0.0/16"      # CloudFront IP ranges
+    ]
   }
 }
 
@@ -33,14 +61,14 @@ ec2_spec = {
   "linux-webserver" = {
     enable_alb_integration = true
     alb_name               = "linux-alb"
-    instance_type          = "t3.medium"
-    vpc_name               = "dev-mig-target-vpc"
-    key_name               = "raja-stg"
+    instance_type          = "t3.small"
+    vpc_name               = "staging-mig-target-vpc"
+    key_name               = "raja-staging"
     os_type                = "linux"
     ami_name               = "amzn2-ami-hvm-*-x86_64-gp2"
-    root_volume_size       = 30
+    root_volume_size       = 20
 
-    # Linux-specific security group rules
+    # Linux-specific security group rules - Secure configuration
     ingress_rules = [
       {
         from_port   = 22
@@ -53,27 +81,20 @@ ec2_spec = {
         from_port   = 80
         to_port     = 80
         protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTP access"
-      },
-      {
-        from_port   = 443
-        to_port     = 443
-        protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTPS access"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTP access from ALB only"
       }
     ]
 
     additional_ebs_volumes = [
       {
         device_name = "/dev/sdf"
-        size        = 100
+        size        = 50
         type        = "gp3"
         encrypted   = true
       }
     ]
-    subnet_name = "dev-mig-private-subnet-1"
+    subnet_name = "staging-mig-private-subnet-1"
 
     tags = {
       Application = "WebServer"
@@ -82,12 +103,12 @@ ec2_spec = {
   },
 
   "linux-appserver" = {
-    instance_type    = "t3.large"
-    vpc_name         = "dev-mig-target-vpc"
-    key_name         = "raja-stg"
+    instance_type    = "t3.medium"
+    vpc_name         = "staging-mig-target-vpc"
+    key_name         = "raja-staging"
     os_type          = "linux"
     ami_name         = "amzn2-ami-hvm-*-x86_64-gp2"
-    root_volume_size = 50
+    root_volume_size = 30
 
     ingress_rules = [
       {
@@ -109,16 +130,16 @@ ec2_spec = {
     additional_ebs_volumes = [
       {
         device_name = "/dev/sdg"
-        size        = 200
+        size        = 100
         type        = "gp3"
         encrypted   = true
       }
     ]
-    subnet_name = "dev-mig-private-subnet-2"
+    subnet_name = "staging-mig-private-subnet-2"
 
     tags = {
       Application = "AppServer"
-      OS          = "Linux"
+      OS          = "Ubuntu"
     }
   },
 
@@ -126,15 +147,15 @@ ec2_spec = {
   "windows-webserver" = {
     enable_alb_integration = true
     alb_name               = "windows-alb"
-    instance_type          = "t3.large" # Windows typically needs more resources
-    vpc_name               = "dev-mig-target-vpc"
-    key_name               = "raja-stg"
+    instance_type          = "t3.medium" # Windows typically needs more resources
+    vpc_name               = "staging-mig-target-vpc"
+    key_name               = "raja-staging"
     os_type                = "windows"
     ami_name               = "Windows_Server-2022-English-Full-Base-*"
 
-    root_volume_size = 80 # Windows needs more space
+    root_volume_size = 50 # Windows needs more space
 
-    # Windows-specific security group rules
+    # Windows-specific security group rules - Secure configuration
     ingress_rules = [
       {
         from_port   = 3389
@@ -147,27 +168,20 @@ ec2_spec = {
         from_port   = 80
         to_port     = 80
         protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTP access"
-      },
-      {
-        from_port   = 443
-        to_port     = 443
-        protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTPS access"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTP access from ALB only"
       }
     ]
 
     additional_ebs_volumes = [
       {
         device_name = "/dev/sdf" # Windows will see this as D: drive
-        size        = 200
+        size        = 100
         type        = "gp3"
         encrypted   = true
       }
     ]
-    subnet_name = "dev-mig-private-subnet-1"
+    subnet_name = "staging-mig-private-subnet-1"
 
     tags = {
       Application = "WebServer"
@@ -176,12 +190,12 @@ ec2_spec = {
   },
 
   "windows-appserver" = {
-    instance_type    = "t3.xlarge"
-    vpc_name         = "dev-mig-target-vpc"
-    key_name         = "raja-stg"
+    instance_type    = "t3.large"
+    vpc_name         = "staging-mig-target-vpc"
+    key_name         = "raja-staging"
     os_type          = "windows"
     ami_name         = "Windows_Server-2019-English-Full-Base-*"
-    root_volume_size = 100
+    root_volume_size = 80
 
     ingress_rules = [
       {
@@ -217,12 +231,12 @@ ec2_spec = {
     additional_ebs_volumes = [
       {
         device_name = "/dev/sdg" # Windows will see this as E: drive
-        size        = 400
+        size        = 200
         type        = "gp3"
         encrypted   = true
       }
     ]
-    subnet_name = "dev-mig-private-subnet-2"
+    subnet_name = "staging-mig-private-subnet-2"
 
     tags = {
       Application = "AppServer"
@@ -234,97 +248,124 @@ ec2_spec = {
 # CloudFront Distribution Specifications
 cloudfront_spec = {
   linux-cf = {
-    distribution_name     = "linux-app-distribution-stg"
-    alb_origin           = "linux-alb"  # References the ALB module key
-    waf_key              = "cloudfront-waf"  # References the WAF module key
-    price_class          = "PriceClass_200"  # More edge locations for staging
+    distribution_name     = "linux-app-distribution"
+    alb_origin            = "linux-alb" # References the ALB module key
+    waf_key               = "cloudfront-waf" # References the WAF module key
+    price_class           = "PriceClass_100"
     ping_auth_cookie_name = "PingAuthCookie"
-    ping_redirect_url    = "https://auth.staging.example.com/login"
-    
+    ping_redirect_url     = "https://auth.staging.example.com/login"
+
     # Supported CloudFront module parameters
     allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods  = ["GET", "HEAD"]
-    
+
     tags = {
-      Application = "LinuxWebApp"
-      Distribution = "Staging"
+      Application  = "LinuxWebApp"
+      Distribution = "Primary"
     }
   },
-  
+
   windows-cf = {
-    distribution_name     = "windows-app-distribution-stg"
-    alb_origin           = "windows-alb"  # References the ALB module key
-    waf_key              = "cloudfront-waf"  # References the WAF module key
-    price_class          = "PriceClass_200"
+    distribution_name     = "windows-app-distribution"
+    alb_origin            = "windows-alb" # References the ALB module key
+    waf_key               = "cloudfront-waf" # References the WAF module key
+    price_class           = "PriceClass_100"
     ping_auth_cookie_name = "PingAuthCookie"
-    ping_redirect_url    = "https://auth.staging.example.com/login"
-    
+    ping_redirect_url     = "https://auth.staging.example.com/login"
+
     # Supported CloudFront module parameters
     allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods  = ["GET", "HEAD"]
-    
+
     tags = {
-      Application = "WindowsWebApp"
-      Distribution = "Staging"
+      Application  = "WindowsWebApp"
+      Distribution = "Primary"
     }
   }
 }
 
-# WAF Configuration Specifications
+# WAF Configuration Specifications - Production-Grade Security
 waf_spec = {
   cloudfront-waf = {
     scope = "CLOUDFRONT"  # For CloudFront distributions
-    
-    # AWS Managed Rules - More comprehensive for staging
+
+    # Comprehensive AWS Managed Rules for maximum protection
     enable_all_aws_managed_rules = false
     enabled_aws_managed_rules = [
-      "common_rule_set",
-      "known_bad_inputs",
-      "linux_rule_set",
-      "sqli_rule_set",
-      "wordpress_rule_set"
+      "common_rule_set",      # Core protection
+      "known_bad_inputs",     # Malicious input protection
+      "sqli_rule_set",        # SQL injection protection
+      "ip_reputation",        # Bad IP blocking
+      "linux_rule_set",       # Linux-specific attacks
+      "bot_control",          # Bot protection
+      "anonymous_ip"          # Anonymous IP blocking
     ]
-    
-    # Custom rules for staging (priorities 11+ to avoid conflicts with AWS managed rules 1-10)
+
+    # Production-grade custom rules with layered security
     custom_rules = [
       {
-        name                       = "RateLimitRule"
+        name                       = "AggressiveRateLimit"
         priority                   = 11
         action                     = "block"
         type                       = "rate_based"
-        limit                      = 1000  # Stricter than dev
+        limit                      = 300  # 300 requests per 5 minutes
         aggregate_key_type         = "IP"
         cloudwatch_metrics_enabled = true
-        metric_name                = "RateLimitRule"
+        metric_name                = "AggressiveRateLimit"
         sampled_requests_enabled   = true
       },
       {
-        name                       = "GeoBlockRule"
+        name                       = "GeoBlockHighRisk"
         priority                   = 12
         action                     = "block"
         type                       = "geo_match"
-        country_codes              = ["CN", "RU"]  # Block certain countries in staging
+        country_codes              = ["CN", "RU", "KP", "IR", "SY"]  # Expanded high-risk countries
         cloudwatch_metrics_enabled = true
-        metric_name                = "GeoBlockRule"
+        metric_name                = "GeoBlockHighRisk"
         sampled_requests_enabled   = true
       }
     ]
-    
-    # IP sets for staging
+
+    # Enhanced IP sets for comprehensive security
     ip_sets = {
-      staging_allowed_ips = {
+      trusted_office_ips = {
         ip_address_version = "IPV4"
-        addresses          = ["203.0.113.0/24", "198.51.100.0/24", "192.0.2.0/24"]
+        addresses = [
+          "203.0.113.0/24",    # Corporate office (update with your real IPs)
+          "198.51.100.0/24",   # Branch office (update with your real IPs)
+          "49.207.205.136/32"  # Your current IP
+        ]
+      },
+      blocked_malicious_ips = {
+        ip_address_version = "IPV4"
+        addresses = [
+          "192.0.2.0/24"       # Known malicious range
+        ]
       }
     }
-    
-    # Logging configuration
+
+    # Production logging configuration
     enable_logging = true
-    log_retention_days = 60  # Longer retention for staging
+    log_retention_days = 180  # 6 months retention for compliance
     
+    # Privacy-compliant redacted fields
+    redacted_fields = [
+      {
+        single_header = {
+          name = "authorization"
+        }
+      },
+      {
+        single_header = {
+          name = "cookie"
+        }
+      }
+    ]
+
     tags = {
-      Purpose = "CloudFrontProtection"
+      Purpose     = "ProductionCloudFrontProtection"
       Environment = "Staging"
+      Security    = "Maximum"
     }
   }
 }

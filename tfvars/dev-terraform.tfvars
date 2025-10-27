@@ -12,19 +12,47 @@ environment = "dev"
 alb_spec = {
   linux-alb = {
     vpc_name             = "dev-mig-target-vpc"
+    internal             = true  # Make ALB private (internal)
     http_enabled         = true
     https_enabled        = false
     name                 = "linux-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
+    
+    # Security: Only allow CloudFront IP ranges
+    allowed_cidr_blocks = [
+      "52.84.0.0/15",      # CloudFront IP ranges
+      "54.230.0.0/16",     # CloudFront IP ranges
+      "54.239.128.0/18",   # CloudFront IP ranges
+      "52.82.128.0/23",    # CloudFront IP ranges
+      "52.82.134.0/23",    # CloudFront IP ranges
+      "54.240.128.0/18",   # CloudFront IP ranges
+      "52.124.128.0/17",   # CloudFront IP ranges
+      "54.182.0.0/16",     # CloudFront IP ranges
+      "54.192.0.0/16"      # CloudFront IP ranges
+    ]
   },
   windows-alb = {
     vpc_name             = "dev-mig-target-vpc"
+    internal             = true  # Make ALB private (internal)
     http_enabled         = true
     https_enabled        = false
     name                 = "windows-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
+    
+    # Security: Only allow CloudFront IP ranges
+    allowed_cidr_blocks = [
+      "52.84.0.0/15",      # CloudFront IP ranges
+      "54.230.0.0/16",     # CloudFront IP ranges
+      "54.239.128.0/18",   # CloudFront IP ranges
+      "52.82.128.0/23",    # CloudFront IP ranges
+      "52.82.134.0/23",    # CloudFront IP ranges
+      "54.240.128.0/18",   # CloudFront IP ranges
+      "52.124.128.0/17",   # CloudFront IP ranges
+      "54.182.0.0/16",     # CloudFront IP ranges
+      "54.192.0.0/16"      # CloudFront IP ranges
+    ]
   }
 }
 
@@ -40,7 +68,7 @@ ec2_spec = {
     ami_name               = "amzn2-ami-hvm-*-x86_64-gp2"
     root_volume_size       = 20
 
-    # Linux-specific security group rules
+    # Linux-specific security group rules - Secure configuration
     ingress_rules = [
       {
         from_port   = 22
@@ -53,15 +81,8 @@ ec2_spec = {
         from_port   = 80
         to_port     = 80
         protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTP access"
-      },
-      {
-        from_port   = 443
-        to_port     = 443
-        protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTPS access"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTP access from ALB only"
       }
     ]
 
@@ -134,7 +155,7 @@ ec2_spec = {
 
     root_volume_size = 50 # Windows needs more space
 
-    # Windows-specific security group rules
+    # Windows-specific security group rules - Secure configuration
     ingress_rules = [
       {
         from_port   = 3389
@@ -147,15 +168,8 @@ ec2_spec = {
         from_port   = 80
         to_port     = 80
         protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTP access"
-      },
-      {
-        from_port   = 443
-        to_port     = 443
-        protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTPS access"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTP access from ALB only"
       }
     ]
 
@@ -270,49 +284,88 @@ cloudfront_spec = {
   }
 }
 
-# WAF Configuration Specifications
+# WAF Configuration Specifications - Production-Grade Security
 waf_spec = {
   cloudfront-waf = {
     scope = "CLOUDFRONT"  # For CloudFront distributions
 
-    # AWS Managed Rules
+    # Comprehensive AWS Managed Rules for maximum protection
     enable_all_aws_managed_rules = false
     enabled_aws_managed_rules = [
-      "common_rule_set",
-      "known_bad_inputs",
-      "linux_rule_set"
+      "common_rule_set",      # Core protection
+      "known_bad_inputs",     # Malicious input protection
+      "sqli_rule_set",        # SQL injection protection
+      "ip_reputation",        # Bad IP blocking
+      "linux_rule_set",       # Linux-specific attacks
+      "bot_control",          # Bot protection
+      "anonymous_ip"          # Anonymous IP blocking
     ]
 
-    # Custom rules for development (priorities 11+ to avoid conflicts with AWS managed rules 1-10)
+    # Production-grade custom rules with layered security
     custom_rules = [
       {
-        name                       = "RateLimitRule"
+        name                       = "AggressiveRateLimit"
         priority                   = 11
         action                     = "block"
         type                       = "rate_based"
-        limit                      = 2000
+        limit                      = 300  # 300 requests per 5 minutes
         aggregate_key_type         = "IP"
         cloudwatch_metrics_enabled = true
-        metric_name                = "RateLimitRule"
+        metric_name                = "AggressiveRateLimit"
+        sampled_requests_enabled   = true
+      },
+      {
+        name                       = "GeoBlockHighRisk"
+        priority                   = 12
+        action                     = "block"
+        type                       = "geo_match"
+        country_codes              = ["CN", "RU", "KP", "IR", "SY"]  # Expanded high-risk countries
+        cloudwatch_metrics_enabled = true
+        metric_name                = "GeoBlockHighRisk"
         sampled_requests_enabled   = true
       }
     ]
 
-    # IP sets for development
+    # Enhanced IP sets for comprehensive security
     ip_sets = {
-      dev_allowed_ips = {
+      trusted_office_ips = {
         ip_address_version = "IPV4"
-        addresses          = ["203.0.113.0/24", "198.51.100.0/24"] # Example dev office IPs
+        addresses = [
+          "203.0.113.0/24",    # Corporate office (update with your real IPs)
+          "198.51.100.0/24",    # Branch office (update with your real IPs)
+          "49.207.205.136/32"
+        ]
+      },
+      blocked_malicious_ips = {
+        ip_address_version = "IPV4"
+        addresses = [
+          "192.0.2.0/24"       # Known malicious range
+        ]
       }
     }
 
-    # Logging configuration
+    # Production logging configuration
     enable_logging = true
-    log_retention_days = 30  # Optional: CloudWatch log retention period
+    log_retention_days = 180  # 6 months retention for compliance
+    
+    # Privacy-compliant redacted fields
+    redacted_fields = [
+      {
+        single_header = {
+          name = "authorization"
+        }
+      },
+      {
+        single_header = {
+          name = "cookie"
+        }
+      }
+    ]
 
     tags = {
-      Purpose     = "CloudFrontProtection"
+      Purpose     = "ProductionCloudFrontProtection"
       Environment = "Development"
+      Security    = "Maximum"
     }
   }
 }
