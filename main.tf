@@ -54,9 +54,9 @@ module "alb" {
   # Required: VPC name (must match Name tag on your VPC)
   vpc_name = each.value.vpc_name
 
-  # Make ALB internal (private)
-  internal = try(each.value.internal, false)
-  
+  # Security: Restrict ALB access to CloudFront IPs only
+  cloudfront_only = try(each.value.cloudfront_only, false)
+
   # Optional: Basic ALB settings
   http_enabled  = each.value.http_enabled
   https_enabled = each.value.https_enabled
@@ -130,7 +130,7 @@ module "ec2_instance" {
 
 # WAF - Web Application Firewall (created before CloudFront)
 module "waf" {
-  source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
+  source = "./tf-waf-base-module"
 
   for_each = var.waf_spec
 
@@ -183,7 +183,7 @@ module "waf" {
 
 # CloudFront Distribution - Linked to ALB origins
 module "cloudfront" {
-  source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
+  source = "./tf-cf-base-module"
 
   for_each = var.cloudfront_spec
 

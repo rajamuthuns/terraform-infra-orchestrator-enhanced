@@ -12,49 +12,25 @@ environment = "dev"
 alb_spec = {
   linux-alb = {
     vpc_name             = "dev-mig-target-vpc"
-    internal             = true  # Make ALB private (internal)
     http_enabled         = true
     https_enabled        = false
     name                 = "linux-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
-    alb_access_logs_s3_bucket_force_destroy = true
     
-    # Security: Only allow CloudFront IP ranges
-    allowed_cidr_blocks = [
-      "52.84.0.0/15",      # CloudFront IP ranges
-      "54.230.0.0/16",     # CloudFront IP ranges
-      "54.239.128.0/18",   # CloudFront IP ranges
-      "52.82.128.0/23",    # CloudFront IP ranges
-      "52.82.134.0/23",    # CloudFront IP ranges
-      "54.240.128.0/18",   # CloudFront IP ranges
-      "52.124.128.0/17",   # CloudFront IP ranges
-      "54.182.0.0/16",     # CloudFront IP ranges
-      "54.192.0.0/16"      # CloudFront IP ranges
-    ]
+    # Security: Restrict to CloudFront IPs only
+    cloudfront_only = true
   },
   windows-alb = {
     vpc_name             = "dev-mig-target-vpc"
-    internal             = true  # Make ALB private (internal)
     http_enabled         = true
     https_enabled        = false
     name                 = "windows-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
-    alb_access_logs_s3_bucket_force_destroy = true
     
-    # Security: Only allow CloudFront IP ranges
-    allowed_cidr_blocks = [
-      "52.84.0.0/15",      # CloudFront IP ranges
-      "54.230.0.0/16",     # CloudFront IP ranges
-      "54.239.128.0/18",   # CloudFront IP ranges
-      "52.82.128.0/23",    # CloudFront IP ranges
-      "52.82.134.0/23",    # CloudFront IP ranges
-      "54.240.128.0/18",   # CloudFront IP ranges
-      "52.124.128.0/17",   # CloudFront IP ranges
-      "54.182.0.0/16",     # CloudFront IP ranges
-      "54.192.0.0/16"      # CloudFront IP ranges
-    ]
+    # Security: Restrict to CloudFront IPs only
+    cloudfront_only = true
   }
 }
 
