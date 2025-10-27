@@ -125,7 +125,7 @@ module "ec2_instance" {
 
 # CloudFront Distribution - Linked to ALB origins
 module "cloudfront" {
-  source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
+  source = "./tf-cf-base-module"
 
   for_each = var.cloudfront_spec
 
@@ -146,9 +146,9 @@ module "cloudfront" {
   }, try(each.value.tags, {}))
 }
 
-# WAF - Linked to CloudFront distributions
+# WAF - Linked to CloudFront distributions with graceful error handling
 module "waf" {
-  source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
+  source = "./tf-waf-base-module"
 
   for_each = var.waf_spec
 
@@ -171,12 +171,18 @@ module "waf" {
     }
   }
 
-  # Resource associations - Link to CloudFront or ALB based on scope
-  associated_resource_arns = each.value.scope == "CLOUDFRONT" ? [
-    for cf_key in each.value.protected_distributions : module.cloudfront[cf_key].distribution_arn
-  ] : [
-    for alb_key in each.value.protected_albs : module.alb[alb_key].alb_arn
-  ]
+  # Resource associations - Use try/lookup to handle unknown values gracefully
+  associated_resource_arns = compact([
+    for resource_key in (each.value.scope == "CLOUDFRONT" ? 
+      try(each.value.protected_distributions, []) : 
+      try(each.value.protected_albs, [])
+    ) : try(
+      each.value.scope == "CLOUDFRONT" ? 
+        module.cloudfront[resource_key].distribution_arn : 
+        module.alb[resource_key].alb_arn,
+      ""
+    )
+  ])
 
   # Logging configuration
   enable_logging          = try(each.value.enable_logging, false)
