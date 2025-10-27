@@ -123,8 +123,6 @@ module "ec2_instance" {
 }
 
 
-
-
 # WAF - Web Application Firewall (created before CloudFront)
 module "waf" {
   source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
