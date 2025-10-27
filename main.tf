@@ -123,13 +123,15 @@ module "ec2_instance" {
 }
 
 
+
+
 # CloudFront Distribution - Linked to ALB origins
 module "cloudfront" {
   source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
 
   for_each = var.cloudfront_spec
 
- distribution_name     = each.value.distribution_name
+  distribution_name     = each.value.distribution_name
   origin_domain_name    = module.alb[each.value.alb_origin].alb_dns_name
   ping_auth_cookie_name = try(each.value.ping_auth_cookie_name, "PingAccessToken")
   ping_redirect_url     = each.value.ping_redirect_url
@@ -139,22 +141,19 @@ module "cloudfront" {
   cached_methods  = try(each.value.cached_methods, ["GET", "HEAD"])
   price_class     = try(each.value.price_class, "PriceClass_100")
 
-  # WAF Web ACL association
-  web_acl_id = local.cloudfront_waf_mapping[each.key].waf_key != null ? module.waf[local.cloudfront_waf_mapping[each.key].waf_key].web_acl_arn : null
+  # WAF Web ACL association - reference WAF module output
+  web_acl_id = try(each.value.waf_key, null) != null ? module.waf[each.value.waf_key].web_acl_arn : null
 
   tags = merge(var.common_tags, {
     Environment = var.environment
     Purpose     = "cloudfront-alb-integration"
     ALBOrigin   = each.value.alb_origin
   }, try(each.value.tags, {}))
-
-  # Ensure CloudFront is created after WAF when WAF is associated
-  depends_on = [module.waf]
 }
 
 # WAF - Linked to CloudFront distributions with graceful error handling
 module "waf" {
-  source =  "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
+  source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
 
   for_each = var.waf_spec
 
@@ -177,11 +176,16 @@ module "waf" {
     }
   }
 
-  # Resource associations - Use try/lookup to handle unknown values gracefully
-  associated_resource_arns = []
-  # Logging configuration
-  enable_logging          = try(each.value.enable_logging, false)
-  log_destination_configs = try(each.value.log_destination_configs, [])
+  # Resource associations - CloudFront associations handled separately
+  # Note: For CloudFront scope, associations are not handled through this parameter
+  # CloudFront-WAF integration requires updating the CloudFront distribution configuration
+  associated_resource_arns = each.value.scope == "REGIONAL" ? [
+    for alb_key in try(each.value.protected_albs, []) : module.alb[alb_key].alb_arn
+  ] : []
+
+  # Logging configuration - Log group created automatically by module
+  enable_logging     = try(each.value.enable_logging, false)
+  log_retention_days = try(each.value.log_retention_days, 30)
   
   # Redacted fields - Convert from tfvars format to module format
   redacted_fields = [
@@ -203,15 +207,3 @@ module "waf" {
   depends_on = [module.cloudfront]
 }
 
-# Local values for WAF-CloudFront mapping
-locals {
-  # Create a mapping of CloudFront distributions to their associated WAF Web ACLs
-  cloudfront_waf_mapping = {
-    for cf_key, cf_config in var.cloudfront_spec : cf_key => {
-      waf_key = try([
-        for waf_key, waf_config in var.waf_spec : waf_key
-        if waf_config.scope == "CLOUDFRONT" && contains(try(waf_config.protected_distributions, []), cf_key)
-      ][0], null)
-    }
-  }
-}

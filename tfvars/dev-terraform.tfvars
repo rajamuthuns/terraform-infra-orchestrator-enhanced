@@ -236,6 +236,7 @@ cloudfront_spec = {
   linux-cf = {
     distribution_name     = "linux-app-distribution"
     alb_origin            = "linux-alb" # References the ALB module key
+    waf_key               = "cloudfront-waf" # References the WAF module key
     price_class           = "PriceClass_100"
     ping_auth_cookie_name = "PingAuthCookie"
     ping_redirect_url     = "https://auth.dev.example.com/login"
@@ -253,6 +254,7 @@ cloudfront_spec = {
   windows-cf = {
     distribution_name     = "windows-app-distribution"
     alb_origin            = "windows-alb" # References the ALB module key
+    waf_key               = "cloudfront-waf" # References the WAF module key
     price_class           = "PriceClass_100"
     ping_auth_cookie_name = "PingAuthCookie"
     ping_redirect_url     = "https://auth.dev.example.com/login"
@@ -271,8 +273,7 @@ cloudfront_spec = {
 # WAF Configuration Specifications
 waf_spec = {
   cloudfront-waf = {
-    scope                   = "CLOUDFRONT"               # For CloudFront distributions
-    protected_distributions = ["linux-cf", "windows-cf"] # References CloudFront module keys
+    scope = "CLOUDFRONT"  # For CloudFront distributions
 
     # AWS Managed Rules
     enable_all_aws_managed_rules = false
@@ -306,10 +307,8 @@ waf_spec = {
     }
 
     # Logging configuration
-    enable_logging = false
-    log_destination_configs = [
-      "arn:aws:logs:us-east-1:221106935066:log-group:aws-waf-logs-dev"
-    ]
+    enable_logging = true
+    log_retention_days = 30  # Optional: CloudWatch log retention period
 
     tags = {
       Purpose     = "CloudFrontProtection"

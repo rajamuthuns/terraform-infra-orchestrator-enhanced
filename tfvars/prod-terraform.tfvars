@@ -227,37 +227,39 @@ ec2_spec = {
 cloudfront_spec = {
   linux-cf = {
     distribution_name     = "linux-app-distribution-prod"
-    alb_origin           = "linux-alb"  # References the ALB module key
-    price_class          = "PriceClass_All"  # Global distribution for production
+    alb_origin            = "linux-alb"      # References the ALB module key
+    waf_key               = "cloudfront-waf"  # References the WAF module key
+    price_class           = "PriceClass_All" # Global distribution for production
     ping_auth_cookie_name = "PingAuthCookie"
-    ping_redirect_url    = "https://auth.example.com/login"
-    
+    ping_redirect_url     = "https://auth.example.com/login"
+
     # Supported CloudFront module parameters
     allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods  = ["GET", "HEAD"]
-    
+
     tags = {
-      Application = "LinuxWebApp"
+      Application  = "LinuxWebApp"
       Distribution = "Production"
-      Backup = "Required"
+      Backup       = "Required"
     }
   },
-  
+
   windows-cf = {
     distribution_name     = "windows-app-distribution-prod"
-    alb_origin           = "windows-alb"  # References the ALB module key
-    price_class          = "PriceClass_All"
+    alb_origin            = "windows-alb" # References the ALB module key
+    waf_key               = "cloudfront-waf"  # References the WAF module key
+    price_class           = "PriceClass_All"
     ping_auth_cookie_name = "PingAuthCookie"
-    ping_redirect_url    = "https://auth.example.com/login"
-    
+    ping_redirect_url     = "https://auth.example.com/login"
+
     # Supported CloudFront module parameters
     allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods  = ["GET", "HEAD"]
-    
+
     tags = {
-      Application = "WindowsWebApp"
+      Application  = "WindowsWebApp"
       Distribution = "Production"
-      Backup = "Required"
+      Backup       = "Required"
     }
   }
 }
@@ -266,8 +268,7 @@ cloudfront_spec = {
 waf_spec = {
   cloudfront-waf = {
     scope = "CLOUDFRONT"  # For CloudFront distributions
-    protected_distributions = ["linux-cf", "windows-cf"]  # References CloudFront module keys
-    
+
     # AWS Managed Rules - Comprehensive production security
     enable_all_aws_managed_rules = false
     enabled_aws_managed_rules = [
@@ -280,7 +281,7 @@ waf_spec = {
       "anonymous_ip",
       "bot_control"
     ]
-    
+
     # Production custom rules (priorities 11+ to avoid conflicts with AWS managed rules 1-10)
     custom_rules = [
       {
@@ -288,7 +289,7 @@ waf_spec = {
         priority                   = 11
         action                     = "block"
         type                       = "rate_based"
-        limit                      = 500  # Strict rate limiting for production
+        limit                      = 500 # Strict rate limiting for production
         aggregate_key_type         = "IP"
         cloudwatch_metrics_enabled = true
         metric_name                = "ProductionRateLimitRule"
@@ -299,31 +300,29 @@ waf_spec = {
         priority                   = 12
         action                     = "block"
         type                       = "geo_match"
-        country_codes              = ["CN", "RU", "KP", "IR"]  # Block high-risk countries
+        country_codes              = ["CN", "RU", "KP", "IR"] # Block high-risk countries
         cloudwatch_metrics_enabled = true
         metric_name                = "ProductionGeoBlockRule"
         sampled_requests_enabled   = true
       }
     ]
-    
+
     # IP sets for production
     ip_sets = {
       production_allowed_ips = {
         ip_address_version = "IPV4"
-        addresses          = ["203.0.113.0/24"]  # Only corporate IPs
+        addresses          = ["203.0.113.0/24"] # Only corporate IPs
       },
       production_blocked_ips = {
         ip_address_version = "IPV4"
-        addresses          = []  # Populated as needed
+        addresses          = [] # Populated as needed
       }
     }
-    
+
     # Comprehensive logging for production
-    enable_logging = false
-    log_destination_configs = [
-      "arn:aws:logs:us-east-1:221106935066:log-group:aws-waf-logs-production"
-    ]
-    
+    enable_logging = true
+    log_retention_days = 90  # Longer retention for production compliance
+
     redacted_fields = [
       {
         single_header = {
@@ -336,12 +335,12 @@ waf_spec = {
         }
       }
     ]
-    
+
     tags = {
-      Purpose = "CloudFrontProtection"
+      Purpose     = "CloudFrontProtection"
       Environment = "Production"
-      Compliance = "Required"
-      Backup = "Required"
+      Compliance  = "Required"
+      Backup      = "Required"
     }
   }
 }

@@ -236,6 +236,7 @@ cloudfront_spec = {
   linux-cf = {
     distribution_name     = "linux-app-distribution-stg"
     alb_origin           = "linux-alb"  # References the ALB module key
+    waf_key              = "cloudfront-waf"  # References the WAF module key
     price_class          = "PriceClass_200"  # More edge locations for staging
     ping_auth_cookie_name = "PingAuthCookie"
     ping_redirect_url    = "https://auth.staging.example.com/login"
@@ -253,6 +254,7 @@ cloudfront_spec = {
   windows-cf = {
     distribution_name     = "windows-app-distribution-stg"
     alb_origin           = "windows-alb"  # References the ALB module key
+    waf_key              = "cloudfront-waf"  # References the WAF module key
     price_class          = "PriceClass_200"
     ping_auth_cookie_name = "PingAuthCookie"
     ping_redirect_url    = "https://auth.staging.example.com/login"
@@ -272,7 +274,6 @@ cloudfront_spec = {
 waf_spec = {
   cloudfront-waf = {
     scope = "CLOUDFRONT"  # For CloudFront distributions
-    protected_distributions = ["linux-cf", "windows-cf"]  # References CloudFront module keys
     
     # AWS Managed Rules - More comprehensive for staging
     enable_all_aws_managed_rules = false
@@ -318,10 +319,8 @@ waf_spec = {
     }
     
     # Logging configuration
-    enable_logging = false
-    log_destination_configs = [
-      "arn:aws:logs:us-east-1:137617557860:log-group:aws-waf-logs-staging"
-    ]
+    enable_logging = true
+    log_retention_days = 60  # Longer retention for staging
     
     tags = {
       Purpose = "CloudFrontProtection"

@@ -132,8 +132,8 @@ output "architecture_flow" {
       for k, v in module.cloudfront : k => {
         domain_name = v.distribution_domain_name
         origin_alb = try(var.cloudfront_spec[k].alb_origin, "unknown")
-        waf_associated = local.cloudfront_waf_mapping[k].waf_key != null
-        waf_web_acl = local.cloudfront_waf_mapping[k].waf_key
+        waf_associated = try(var.cloudfront_spec[k].waf_key, null) != null
+        waf_web_acl = try(var.cloudfront_spec[k].waf_key, null)
       }
     }
     waf_web_acls = {
@@ -144,18 +144,31 @@ output "architecture_flow" {
       }
     }
     cloudfront_waf_associations = {
-      for k, v in local.cloudfront_waf_mapping : k => {
+      for k, v in var.cloudfront_spec : k => {
         cloudfront_distribution = k
-        waf_web_acl = v.waf_key
-        associated = v.waf_key != null
-      }
+        waf_web_acl = try(v.waf_key, null)
+        associated = try(v.waf_key, null) != null
+      } if try(v.waf_key, null) != null
     }
-    waf_associations = {
-      for k, v in aws_wafv2_web_acl_association.cloudfront_associations : k => {
-        resource_arn = v.resource_arn
-        web_acl_arn = v.web_acl_arn
-      }
+    waf_log_groups = {
+      for k, v in module.waf : k => {
+        name = v.log_group_name
+        arn = v.log_group_arn
+        retention_days = try(var.waf_spec[k].log_retention_days, 30)
+      } if try(var.waf_spec[k].enable_logging, false)
     }
 
+  }
+}
+
+# CloudWatch Log Groups for WAF
+output "cloudwatch_log_groups" {
+  description = "Details of CloudWatch log groups created for WAF logging"
+  value = {
+    for k, v in module.waf : k => {
+      name           = v.log_group_name
+      arn            = v.log_group_arn
+      retention_days = try(var.waf_spec[k].log_retention_days, 30)
+    } if try(var.waf_spec[k].enable_logging, false)
   }
 }
