@@ -306,7 +306,7 @@ waf_spec = {
     }
 
     # Logging configuration
-    enable_logging = true
+    enable_logging = false
     log_destination_configs = [
       "arn:aws:logs:us-east-1:221106935066:log-group:aws-waf-logs-dev"
     ]
