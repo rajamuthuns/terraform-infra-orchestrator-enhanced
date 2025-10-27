@@ -18,6 +18,7 @@ alb_spec = {
     name                 = "linux-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
+    alb_access_logs_s3_bucket_force_destroy = true
     
     # Security: Only allow CloudFront IP ranges
     allowed_cidr_blocks = [
@@ -40,6 +41,7 @@ alb_spec = {
     name                 = "windows-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
+    alb_access_logs_s3_bucket_force_destroy = true
     
     # Security: Only allow CloudFront IP ranges
     allowed_cidr_blocks = [
