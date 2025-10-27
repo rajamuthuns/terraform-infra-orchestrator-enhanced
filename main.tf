@@ -130,7 +130,7 @@ module "ec2_instance" {
 
 # WAF - Web Application Firewall (created before CloudFront)
 module "waf" {
-  source = "./tf-waf-base-module"
+  source =  "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
 
   for_each = var.waf_spec
 
@@ -183,7 +183,7 @@ module "waf" {
 
 # CloudFront Distribution - Linked to ALB origins
 module "cloudfront" {
-  source = "./tf-cf-base-module"
+  source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
 
   for_each = var.cloudfront_spec
 
