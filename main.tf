@@ -207,3 +207,18 @@ module "waf" {
   depends_on = [module.cloudfront]
 }
 
+<<<<<<< HEAD
+=======
+# Local values for WAF-CloudFront mapping
+locals {
+  # Create a mapping of CloudFront distributions to their associated WAF Web ACLs
+  cloudfront_waf_mapping = {
+    for cf_key, cf_config in var.cloudfront_spec : cf_key => {
+      waf_key = try([
+        for waf_key, waf_config in var.waf_spec : waf_key
+        if waf_config.scope == "CLOUDFRONT" && contains(try(waf_config.protected_distributions, []), cf_key)
+      ][0], null)
+    }
+  }
+}
+>>>>>>> 2744dad5f56148a6f080ee4e990f28d99398ef91
