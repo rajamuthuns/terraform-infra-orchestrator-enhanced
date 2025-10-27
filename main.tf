@@ -148,8 +148,6 @@ module "cloudfront" {
     ALBOrigin   = each.value.alb_origin
   }, try(each.value.tags, {}))
 
-  # Ensure CloudFront is created after WAF when WAF is associated
-  depends_on = [module.waf]
 }
 
 # WAF - Linked to CloudFront distributions with graceful error handling
