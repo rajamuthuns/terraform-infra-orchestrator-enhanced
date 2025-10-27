@@ -282,11 +282,11 @@ waf_spec = {
       "linux_rule_set"
     ]
 
-    # Custom rules for development
+    # Custom rules for development (priorities 11+ to avoid conflicts with AWS managed rules 1-10)
     custom_rules = [
       {
         name                       = "RateLimitRule"
-        priority                   = 1
+        priority                   = 11
         action                     = "block"
         type                       = "rate_based"
         limit                      = 2000
