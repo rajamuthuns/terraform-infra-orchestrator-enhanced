@@ -3,23 +3,6 @@
 
 # Project configuration
 project_name = "terraform-infra-orchestrator"
-gitlab_host  = "gitlab.aws.dev"
-gitlab_org   = "sunrajam"
-
-# Base modules configuration
-base_modules = {
-  ec2 = {
-    repository = "ec2-base-module"
-    version    = "main"
-  }
-  alb = {
-    repository = "tf-alb"
-    version    = "main"
-  }
-}
-
-# Primary module for this deployment
-primary_module = "ec2"
 
 # AWS configuration
 account_id  = "221106935066"
@@ -243,16 +226,15 @@ ec2_spec = {
 # CloudFront Distribution Specifications
 cloudfront_spec = {
   linux-cf = {
-    distribution_name      = "linux-app-distribution-prod"
-    alb_origin            = "linux-alb"  # References the ALB module key
-    price_class           = "PriceClass_All"  # Global distribution for production
-    default_root_object   = "index.html"
-    compress              = true
-    viewer_protocol_policy = "https-only"  # HTTPS only in production
-    origin_protocol_policy = "https-only"  # HTTPS to origin in production
-    origin_https_port     = 443
+    distribution_name     = "linux-app-distribution-prod"
+    alb_origin           = "linux-alb"  # References the ALB module key
+    price_class          = "PriceClass_All"  # Global distribution for production
     ping_auth_cookie_name = "PingAuthCookie"
-    ping_redirect_url     = "https://auth.example.com/login"
+    ping_redirect_url    = "https://auth.example.com/login"
+    
+    # Supported CloudFront module parameters
+    allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods  = ["GET", "HEAD"]
     
     tags = {
       Application = "LinuxWebApp"
@@ -262,16 +244,15 @@ cloudfront_spec = {
   },
   
   windows-cf = {
-    distribution_name      = "windows-app-distribution-prod"
-    alb_origin            = "windows-alb"  # References the ALB module key
-    price_class           = "PriceClass_All"
-    default_root_object   = "default.aspx"
-    compress              = true
-    viewer_protocol_policy = "https-only"
-    origin_protocol_policy = "https-only"
-    origin_https_port     = 443
+    distribution_name     = "windows-app-distribution-prod"
+    alb_origin           = "windows-alb"  # References the ALB module key
+    price_class          = "PriceClass_All"
     ping_auth_cookie_name = "PingAuthCookie"
-    ping_redirect_url     = "https://auth.example.com/login"
+    ping_redirect_url    = "https://auth.example.com/login"
+    
+    # Supported CloudFront module parameters
+    allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods  = ["GET", "HEAD"]
     
     tags = {
       Application = "WindowsWebApp"
@@ -370,16 +351,10 @@ waf_spec = {
     # IP sets for production
     ip_sets = {
       production_allowed_ips = {
-        name               = "production-allowed-ips"
-        description        = "Production allowed IP addresses"
-        scope              = "CLOUDFRONT"
         ip_address_version = "IPV4"
         addresses          = ["203.0.113.0/24"]  # Only corporate IPs
       },
       production_blocked_ips = {
-        name               = "production-blocked-ips"
-        description        = "Production blocked IP addresses"
-        scope              = "CLOUDFRONT"
         ip_address_version = "IPV4"
         addresses          = []  # Populated as needed
       }

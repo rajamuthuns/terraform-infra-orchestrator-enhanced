@@ -80,9 +80,9 @@ output "cloudfront_details" {
     for k, v in module.cloudfront : k => {
       distribution_id     = v.distribution_id
       distribution_arn    = v.distribution_arn
-      domain_name         = v.domain_name
-      hosted_zone_id      = v.hosted_zone_id
-      origin_domain_name  = v.origin_domain_name
+      domain_name         = v.distribution_domain_name
+      hosted_zone_id      = v.distribution_hosted_zone_id
+      auth_function_arn   = v.auth_function_arn
     }
   }
 }
@@ -90,7 +90,7 @@ output "cloudfront_details" {
 output "cloudfront_endpoints" {
   description = "All CloudFront distribution endpoints"
   value = {
-    for k, v in module.cloudfront : k => v.domain_name
+    for k, v in module.cloudfront : k => v.distribution_domain_name
   }
 }
 
@@ -99,11 +99,12 @@ output "waf_details" {
   description = "Details of all WAF web ACLs"
   value = {
     for k, v in module.waf : k => {
-      web_acl_id          = v.web_acl_id
-      web_acl_arn         = v.web_acl_arn
-      web_acl_name        = v.web_acl_name
-      scope               = v.scope
-      associated_resources = v.associated_resource_arns
+      web_acl_id       = v.web_acl_id
+      web_acl_arn      = v.web_acl_arn
+      web_acl_name     = v.web_acl_name
+      web_acl_capacity = v.web_acl_capacity
+      ip_set_arns      = v.ip_set_arns
+      deployment_info  = v.deployment_info
     }
   }
 }
@@ -127,7 +128,7 @@ output "architecture_flow" {
     }
     cloudfront_distributions = {
       for k, v in module.cloudfront : k => {
-        domain_name = v.domain_name
+        domain_name = v.distribution_domain_name
         origin_alb = try(var.cloudfront_spec[k].alb_origin, "unknown")
       }
     }

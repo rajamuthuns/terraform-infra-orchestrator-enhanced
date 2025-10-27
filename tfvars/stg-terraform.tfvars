@@ -3,23 +3,6 @@
 
 # Project configuration
 project_name = "terraform-infra-orchestrator"
-gitlab_host  = "gitlab.aws.dev"
-gitlab_org   = "sunrajam"
-
-# Base modules configuration
-base_modules = {
-  ec2 = {
-    repository = "ec2-base-module"
-    version    = "main"
-  }
-  alb = {
-    repository = "tf-alb"
-    version    = "main"
-  }
-}
-
-# Primary module for this deployment
-primary_module = "ec2"
 
 # AWS configuration
 account_id  = "137617557860"
@@ -251,16 +234,15 @@ ec2_spec = {
 # CloudFront Distribution Specifications
 cloudfront_spec = {
   linux-cf = {
-    distribution_name      = "linux-app-distribution-stg"
-    alb_origin            = "linux-alb"  # References the ALB module key
-    price_class           = "PriceClass_200"  # More edge locations for staging
-    default_root_object   = "index.html"
-    compress              = true
-    viewer_protocol_policy = "redirect-to-https"
-    origin_protocol_policy = "http-only"
-    origin_http_port      = 80
+    distribution_name     = "linux-app-distribution-stg"
+    alb_origin           = "linux-alb"  # References the ALB module key
+    price_class          = "PriceClass_200"  # More edge locations for staging
     ping_auth_cookie_name = "PingAuthCookie"
-    ping_redirect_url     = "https://auth.staging.example.com/login"
+    ping_redirect_url    = "https://auth.staging.example.com/login"
+    
+    # Supported CloudFront module parameters
+    allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods  = ["GET", "HEAD"]
     
     tags = {
       Application = "LinuxWebApp"
@@ -269,16 +251,15 @@ cloudfront_spec = {
   },
   
   windows-cf = {
-    distribution_name      = "windows-app-distribution-stg"
-    alb_origin            = "windows-alb"  # References the ALB module key
-    price_class           = "PriceClass_200"
-    default_root_object   = "default.aspx"
-    compress              = true
-    viewer_protocol_policy = "redirect-to-https"
-    origin_protocol_policy = "http-only"
-    origin_http_port      = 80
+    distribution_name     = "windows-app-distribution-stg"
+    alb_origin           = "windows-alb"  # References the ALB module key
+    price_class          = "PriceClass_200"
     ping_auth_cookie_name = "PingAuthCookie"
-    ping_redirect_url     = "https://auth.staging.example.com/login"
+    ping_redirect_url    = "https://auth.staging.example.com/login"
+    
+    # Supported CloudFront module parameters
+    allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods  = ["GET", "HEAD"]
     
     tags = {
       Application = "WindowsWebApp"
@@ -346,9 +327,6 @@ waf_spec = {
     # IP sets for staging
     ip_sets = {
       staging_allowed_ips = {
-        name               = "staging-allowed-ips"
-        description        = "Staging allowed IP addresses"
-        scope              = "CLOUDFRONT"
         ip_address_version = "IPV4"
         addresses          = ["203.0.113.0/24", "198.51.100.0/24", "192.0.2.0/24"]
       }

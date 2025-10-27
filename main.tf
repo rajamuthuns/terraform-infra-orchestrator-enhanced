@@ -125,27 +125,19 @@ module "ec2_instance" {
 
 # CloudFront Distribution - Linked to ALB origins
 module "cloudfront" {
-  source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
+  source = "./tf-cf-base-module"
 
   for_each = var.cloudfront_spec
 
   distribution_name     = each.value.distribution_name
   origin_domain_name    = module.alb[each.value.alb_origin].alb_dns_name
-  ping_auth_cookie_name = try(each.value.ping_auth_cookie_name, "")
-  ping_redirect_url     = try(each.value.ping_redirect_url, "")
+  ping_auth_cookie_name = try(each.value.ping_auth_cookie_name, "PingAccessToken")
+  ping_redirect_url     = each.value.ping_redirect_url
 
-  # Additional CloudFront configurations
-  price_class                = try(each.value.price_class, "PriceClass_100")
-  default_root_object        = try(each.value.default_root_object, "index.html")
-  compress                   = try(each.value.compress, true)
-  viewer_protocol_policy     = try(each.value.viewer_protocol_policy, "redirect-to-https")
-  allowed_methods           = try(each.value.allowed_methods, ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"])
-  cached_methods            = try(each.value.cached_methods, ["GET", "HEAD"])
-  
-  # Origin configuration
-  origin_protocol_policy     = try(each.value.origin_protocol_policy, "http-only")
-  origin_http_port          = try(each.value.origin_http_port, 80)
-  origin_https_port         = try(each.value.origin_https_port, 443)
+  # CloudFront module supported parameters
+  allowed_methods = try(each.value.allowed_methods, ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"])
+  cached_methods  = try(each.value.cached_methods, ["GET", "HEAD"])
+  price_class     = try(each.value.price_class, "PriceClass_100")
 
   tags = merge(var.common_tags, {
     Environment = var.environment
@@ -156,7 +148,7 @@ module "cloudfront" {
 
 # WAF - Linked to CloudFront distributions
 module "waf" {
-  source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git"
+  source = "./tf-waf-base-module"
 
   for_each = var.waf_spec
 
@@ -171,8 +163,13 @@ module "waf" {
   aws_managed_rule_overrides   = try(each.value.aws_managed_rule_overrides, {})
   custom_rules                 = try(each.value.custom_rules, [])
 
-  # IP sets
-  ip_sets = try(each.value.ip_sets, {})
+  # IP sets - Convert from tfvars format to module format
+  ip_sets = {
+    for k, v in try(each.value.ip_sets, {}) : k => {
+      ip_version = try(v.ip_address_version, "IPV4") == "IPV4" ? "IPV4" : "IPV6"
+      addresses  = v.addresses
+    }
+  }
 
   # Resource associations - Link to CloudFront or ALB based on scope
   associated_resource_arns = each.value.scope == "CLOUDFRONT" ? [
@@ -184,7 +181,16 @@ module "waf" {
   # Logging configuration
   enable_logging          = try(each.value.enable_logging, false)
   log_destination_configs = try(each.value.log_destination_configs, [])
-  redacted_fields        = try(each.value.redacted_fields, [])
+  
+  # Redacted fields - Convert from tfvars format to module format
+  redacted_fields = [
+    for field in try(each.value.redacted_fields, []) : {
+      type = field.single_header != null ? "single_header" : (
+        field.query_string != null ? "query_string" : "uri_path"
+      )
+      name = try(field.single_header.name, null)
+    }
+  ]
 
   # Tags
   tags = merge(var.common_tags, {

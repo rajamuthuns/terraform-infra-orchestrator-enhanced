@@ -8,30 +8,7 @@ variable "project_name" {
   default     = "terraform-infra-orchestrator"
 }
 
-variable "gitlab_host" {
-  description = "GitLab host for the private base modules"
-  type        = string
-  default     = "gitlab.aws.dev"
-}
 
-variable "gitlab_org" {
-  description = "GitLab organization name for the private base modules"
-  type        = string
-}
-
-variable "base_modules" {
-  description = "Map of base modules with their repositories and versions"
-  type = map(object({
-    repository = string
-    version    = string
-  }))
-}
-
-variable "primary_module" {
-  description = "Primary module to use for this deployment"
-  type        = string
-  default     = "ec2"
-}
 
 # AWS configuration
 variable "aws_region" {
