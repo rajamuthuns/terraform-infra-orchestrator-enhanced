@@ -318,7 +318,7 @@ waf_spec = {
     }
     
     # Logging configuration
-    enable_logging = true
+    enable_logging = false
     log_destination_configs = [
       "arn:aws:logs:us-east-1:137617557860:log-group:aws-waf-logs-staging"
     ]

@@ -197,25 +197,8 @@ module "waf" {
   depends_on = [module.cloudfront]
 }
 
-# Data source to get CloudFront distribution ARNs after they're created
-data "aws_cloudfront_distribution" "distributions" {
-  for_each = {
-    for combo in flatten([
-      for waf_key, waf_config in var.waf_spec : [
-        for cf_key in try(waf_config.protected_distributions, []) : {
-          key = "${waf_key}-${cf_key}"
-          waf_key = waf_key
-          cf_key = cf_key
-        }
-      ] if waf_config.scope == "CLOUDFRONT"
-    ]) : combo.key => combo
-  }
 
-  id = module.cloudfront[each.value.cf_key].distribution_id
-  depends_on = [module.cloudfront]
-}
-
-# WAF associations using data source ARNs
+# WAF associations using module output ARNs
 resource "aws_wafv2_web_acl_association" "cloudfront_associations" {
   for_each = {
     for combo in flatten([
@@ -229,8 +212,8 @@ resource "aws_wafv2_web_acl_association" "cloudfront_associations" {
     ]) : combo.key => combo
   }
 
-  resource_arn = data.aws_cloudfront_distribution.distributions[each.key].arn
+  resource_arn = module.cloudfront[each.value.cf_key].distribution_arn
   web_acl_arn  = module.waf[each.value.waf_key].web_acl_arn
 
-  depends_on = [module.cloudfront, module.waf, data.aws_cloudfront_distribution.distributions]
+  depends_on = [module.cloudfront, module.waf]
 }
