@@ -129,7 +129,7 @@ module "cloudfront" {
 
   for_each = var.cloudfront_spec
 
-  distribution_name     = each.value.distribution_name
+ distribution_name     = each.value.distribution_name
   origin_domain_name    = module.alb[each.value.alb_origin].alb_dns_name
   ping_auth_cookie_name = try(each.value.ping_auth_cookie_name, "PingAccessToken")
   ping_redirect_url     = each.value.ping_redirect_url
@@ -139,11 +139,17 @@ module "cloudfront" {
   cached_methods  = try(each.value.cached_methods, ["GET", "HEAD"])
   price_class     = try(each.value.price_class, "PriceClass_100")
 
+  # WAF Web ACL association
+  web_acl_id = local.cloudfront_waf_mapping[each.key].waf_key != null ? module.waf[local.cloudfront_waf_mapping[each.key].waf_key].web_acl_arn : null
+
   tags = merge(var.common_tags, {
     Environment = var.environment
     Purpose     = "cloudfront-alb-integration"
     ALBOrigin   = each.value.alb_origin
   }, try(each.value.tags, {}))
+
+  # Ensure CloudFront is created after WAF when WAF is associated
+  depends_on = [module.waf]
 }
 
 # WAF - Linked to CloudFront distributions with graceful error handling
@@ -197,23 +203,15 @@ module "waf" {
   depends_on = [module.cloudfront]
 }
 
-
-# WAF associations using module output ARNs
-resource "aws_wafv2_web_acl_association" "cloudfront_associations" {
-  for_each = {
-    for combo in flatten([
-      for waf_key, waf_config in var.waf_spec : [
-        for cf_key in try(waf_config.protected_distributions, []) : {
-          key = "${waf_key}-${cf_key}"
-          waf_key = waf_key
-          cf_key = cf_key
-        }
-      ] if waf_config.scope == "CLOUDFRONT"
-    ]) : combo.key => combo
+# Local values for WAF-CloudFront mapping
+locals {
+  # Create a mapping of CloudFront distributions to their associated WAF Web ACLs
+  cloudfront_waf_mapping = {
+    for cf_key, cf_config in var.cloudfront_spec : cf_key => {
+      waf_key = try([
+        for waf_key, waf_config in var.waf_spec : waf_key
+        if waf_config.scope == "CLOUDFRONT" && contains(try(waf_config.protected_distributions, []), cf_key)
+      ][0], null)
+    }
   }
-
-  resource_arn = module.cloudfront[each.value.cf_key].distribution_arn
-  web_acl_arn  = module.waf[each.value.waf_key].web_acl_arn
-
-  depends_on = [module.cloudfront, module.waf]
 }

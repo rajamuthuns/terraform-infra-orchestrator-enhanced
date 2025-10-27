@@ -132,6 +132,8 @@ output "architecture_flow" {
       for k, v in module.cloudfront : k => {
         domain_name = v.distribution_domain_name
         origin_alb = try(var.cloudfront_spec[k].alb_origin, "unknown")
+        waf_associated = local.cloudfront_waf_mapping[k].waf_key != null
+        waf_web_acl = local.cloudfront_waf_mapping[k].waf_key
       }
     }
     waf_web_acls = {
@@ -139,6 +141,13 @@ output "architecture_flow" {
         web_acl_name = v.web_acl_name
         scope = try(var.waf_spec[k].scope, "REGIONAL")
         protected_resources = try(var.waf_spec[k].scope, "") == "CLOUDFRONT" ? try(var.waf_spec[k].protected_distributions, []) : try(var.waf_spec[k].protected_albs, [])
+      }
+    }
+    cloudfront_waf_associations = {
+      for k, v in local.cloudfront_waf_mapping : k => {
+        cloudfront_distribution = k
+        waf_web_acl = v.waf_key
+        associated = v.waf_key != null
       }
     }
     waf_associations = {
