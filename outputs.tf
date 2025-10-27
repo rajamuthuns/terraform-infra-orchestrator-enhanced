@@ -109,6 +109,8 @@ output "waf_details" {
   }
 }
 
+
+
 # Complete architecture flow summary
 output "architecture_flow" {
   description = "Complete architecture flow: EC2 → ALB → CloudFront → WAF"
@@ -135,7 +137,7 @@ output "architecture_flow" {
     waf_web_acls = {
       for k, v in module.waf : k => {
         web_acl_name = v.web_acl_name
-        scope = v.scope
+        scope = try(var.waf_spec[k].scope, "REGIONAL")
         protected_resources = try(var.waf_spec[k].scope, "") == "CLOUDFRONT" ? try(var.waf_spec[k].protected_distributions, []) : try(var.waf_spec[k].protected_albs, [])
       }
     }
@@ -145,5 +147,6 @@ output "architecture_flow" {
         web_acl_arn = v.web_acl_arn
       }
     }
+
   }
 }
