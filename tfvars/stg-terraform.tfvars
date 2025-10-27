@@ -247,3 +247,124 @@ ec2_spec = {
     }
   }
 }
+
+# CloudFront Distribution Specifications
+cloudfront_spec = {
+  linux-cf = {
+    distribution_name      = "linux-app-distribution-stg"
+    alb_origin            = "linux-alb"  # References the ALB module key
+    price_class           = "PriceClass_200"  # More edge locations for staging
+    default_root_object   = "index.html"
+    compress              = true
+    viewer_protocol_policy = "redirect-to-https"
+    origin_protocol_policy = "http-only"
+    origin_http_port      = 80
+    ping_auth_cookie_name = "PingAuthCookie"
+    ping_redirect_url     = "https://auth.staging.example.com/login"
+    
+    tags = {
+      Application = "LinuxWebApp"
+      Distribution = "Staging"
+    }
+  },
+  
+  windows-cf = {
+    distribution_name      = "windows-app-distribution-stg"
+    alb_origin            = "windows-alb"  # References the ALB module key
+    price_class           = "PriceClass_200"
+    default_root_object   = "default.aspx"
+    compress              = true
+    viewer_protocol_policy = "redirect-to-https"
+    origin_protocol_policy = "http-only"
+    origin_http_port      = 80
+    ping_auth_cookie_name = "PingAuthCookie"
+    ping_redirect_url     = "https://auth.staging.example.com/login"
+    
+    tags = {
+      Application = "WindowsWebApp"
+      Distribution = "Staging"
+    }
+  }
+}
+
+# WAF Configuration Specifications
+waf_spec = {
+  cloudfront-waf = {
+    scope = "CLOUDFRONT"  # For CloudFront distributions
+    protected_distributions = ["linux-cf", "windows-cf"]  # References CloudFront module keys
+    
+    # AWS Managed Rules - More comprehensive for staging
+    enable_all_aws_managed_rules = false
+    enabled_aws_managed_rules = [
+      "AWSManagedRulesCommonRuleSet",
+      "AWSManagedRulesKnownBadInputsRuleSet",
+      "AWSManagedRulesLinuxRuleSet",
+      "AWSManagedRulesWindowsRuleSet",
+      "AWSManagedRulesSQLiRuleSet",
+      "AWSManagedRulesWordPressRuleSet"
+    ]
+    
+    # Custom rules for staging
+    custom_rules = [
+      {
+        name     = "RateLimitRule"
+        priority = 1
+        action   = "block"
+        
+        statement = {
+          rate_based_statement = {
+            limit              = 1000  # Stricter than dev
+            aggregate_key_type = "IP"
+          }
+        }
+        
+        visibility_config = {
+          cloudwatch_metrics_enabled = true
+          metric_name                = "RateLimitRule"
+          sampled_requests_enabled   = true
+        }
+      },
+      {
+        name     = "GeoBlockRule"
+        priority = 2
+        action   = "block"
+        
+        statement = {
+          geo_match_statement = {
+            country_codes = ["CN", "RU"]  # Block certain countries in staging
+          }
+        }
+        
+        visibility_config = {
+          cloudwatch_metrics_enabled = true
+          metric_name                = "GeoBlockRule"
+          sampled_requests_enabled   = true
+        }
+      }
+    ]
+    
+    # IP sets for staging
+    ip_sets = {
+      staging_allowed_ips = {
+        name               = "staging-allowed-ips"
+        description        = "Staging allowed IP addresses"
+        scope              = "CLOUDFRONT"
+        ip_address_version = "IPV4"
+        addresses          = ["203.0.113.0/24", "198.51.100.0/24", "192.0.2.0/24"]
+      }
+    }
+    
+    # Logging configuration
+    enable_logging = true
+    log_destination_configs = [
+      {
+        resource_arn = "arn:aws:logs:us-east-1:137617557860:log-group:aws-waf-logs-staging"
+      }
+    ]
+    
+    tags = {
+      Purpose = "CloudFrontProtection"
+      Environment = "Staging"
+    }
+  }
+}

@@ -72,3 +72,71 @@ output "alb_endpoints" {
     for k, v in module.alb : k => v.alb_dns_name
   }
 }
+
+# CloudFront outputs
+output "cloudfront_details" {
+  description = "Details of all CloudFront distributions"
+  value = {
+    for k, v in module.cloudfront : k => {
+      distribution_id     = v.distribution_id
+      distribution_arn    = v.distribution_arn
+      domain_name         = v.domain_name
+      hosted_zone_id      = v.hosted_zone_id
+      origin_domain_name  = v.origin_domain_name
+    }
+  }
+}
+
+output "cloudfront_endpoints" {
+  description = "All CloudFront distribution endpoints"
+  value = {
+    for k, v in module.cloudfront : k => v.domain_name
+  }
+}
+
+# WAF outputs
+output "waf_details" {
+  description = "Details of all WAF web ACLs"
+  value = {
+    for k, v in module.waf : k => {
+      web_acl_id          = v.web_acl_id
+      web_acl_arn         = v.web_acl_arn
+      web_acl_name        = v.web_acl_name
+      scope               = v.scope
+      associated_resources = v.associated_resource_arns
+    }
+  }
+}
+
+# Complete architecture flow summary
+output "architecture_flow" {
+  description = "Complete architecture flow: EC2 → ALB → CloudFront → WAF"
+  value = {
+    ec2_instances = {
+      for k, v in module.ec2_instance : k => {
+        instance_id = v.instance_id
+        private_ip  = v.private_ip
+        alb_integration = try(var.ec2_spec[k].enable_alb_integration, false) ? var.ec2_spec[k].alb_name : "none"
+      }
+    }
+    alb_load_balancers = {
+      for k, v in module.alb : k => {
+        dns_name = v.alb_dns_name
+        target_group_arn = v.default_target_group_arn
+      }
+    }
+    cloudfront_distributions = {
+      for k, v in module.cloudfront : k => {
+        domain_name = v.domain_name
+        origin_alb = try(var.cloudfront_spec[k].alb_origin, "unknown")
+      }
+    }
+    waf_web_acls = {
+      for k, v in module.waf : k => {
+        web_acl_name = v.web_acl_name
+        scope = v.scope
+        protected_resources = try(var.waf_spec[k].scope, "") == "CLOUDFRONT" ? try(var.waf_spec[k].protected_distributions, []) : try(var.waf_spec[k].protected_albs, [])
+      }
+    }
+  }
+}

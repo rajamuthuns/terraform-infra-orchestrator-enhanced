@@ -68,7 +68,7 @@ variable "common_tags" {
   }
 }
 
-# Module specifications
+# Module specifications - All configurations come from tfvars
 variable "ec2_spec" {
   description = "EC2 instance specifications"
   type        = any
@@ -77,6 +77,18 @@ variable "ec2_spec" {
 
 variable "alb_spec" {
   description = "ALB module specifications"
+  type        = any
+  default     = {}
+}
+
+variable "cloudfront_spec" {
+  description = "CloudFront distribution specifications"
+  type        = any
+  default     = {}
+}
+
+variable "waf_spec" {
+  description = "WAF configuration specifications"
   type        = any
   default     = {}
 }

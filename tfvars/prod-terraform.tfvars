@@ -239,3 +239,178 @@ ec2_spec = {
     }
   }
 }
+
+# CloudFront Distribution Specifications
+cloudfront_spec = {
+  linux-cf = {
+    distribution_name      = "linux-app-distribution-prod"
+    alb_origin            = "linux-alb"  # References the ALB module key
+    price_class           = "PriceClass_All"  # Global distribution for production
+    default_root_object   = "index.html"
+    compress              = true
+    viewer_protocol_policy = "https-only"  # HTTPS only in production
+    origin_protocol_policy = "https-only"  # HTTPS to origin in production
+    origin_https_port     = 443
+    ping_auth_cookie_name = "PingAuthCookie"
+    ping_redirect_url     = "https://auth.example.com/login"
+    
+    tags = {
+      Application = "LinuxWebApp"
+      Distribution = "Production"
+      Backup = "Required"
+    }
+  },
+  
+  windows-cf = {
+    distribution_name      = "windows-app-distribution-prod"
+    alb_origin            = "windows-alb"  # References the ALB module key
+    price_class           = "PriceClass_All"
+    default_root_object   = "default.aspx"
+    compress              = true
+    viewer_protocol_policy = "https-only"
+    origin_protocol_policy = "https-only"
+    origin_https_port     = 443
+    ping_auth_cookie_name = "PingAuthCookie"
+    ping_redirect_url     = "https://auth.example.com/login"
+    
+    tags = {
+      Application = "WindowsWebApp"
+      Distribution = "Production"
+      Backup = "Required"
+    }
+  }
+}
+
+# WAF Configuration Specifications
+waf_spec = {
+  cloudfront-waf = {
+    scope = "CLOUDFRONT"  # For CloudFront distributions
+    protected_distributions = ["linux-cf", "windows-cf"]  # References CloudFront module keys
+    
+    # AWS Managed Rules - Comprehensive production security
+    enable_all_aws_managed_rules = false
+    enabled_aws_managed_rules = [
+      "AWSManagedRulesCommonRuleSet",
+      "AWSManagedRulesKnownBadInputsRuleSet",
+      "AWSManagedRulesLinuxRuleSet",
+      "AWSManagedRulesWindowsRuleSet",
+      "AWSManagedRulesSQLiRuleSet",
+      "AWSManagedRulesWordPressRuleSet",
+      "AWSManagedRulesAmazonIpReputationList",
+      "AWSManagedRulesAnonymousIpList",
+      "AWSManagedRulesBotControlRuleSet"
+    ]
+    
+    # Production custom rules
+    custom_rules = [
+      {
+        name     = "ProductionRateLimitRule"
+        priority = 1
+        action   = "block"
+        
+        statement = {
+          rate_based_statement = {
+            limit              = 500  # Strict rate limiting for production
+            aggregate_key_type = "IP"
+          }
+        }
+        
+        visibility_config = {
+          cloudwatch_metrics_enabled = true
+          metric_name                = "ProductionRateLimitRule"
+          sampled_requests_enabled   = true
+        }
+      },
+      {
+        name     = "ProductionGeoBlockRule"
+        priority = 2
+        action   = "block"
+        
+        statement = {
+          geo_match_statement = {
+            country_codes = ["CN", "RU", "KP", "IR"]  # Block high-risk countries
+          }
+        }
+        
+        visibility_config = {
+          cloudwatch_metrics_enabled = true
+          metric_name                = "ProductionGeoBlockRule"
+          sampled_requests_enabled   = true
+        }
+      },
+      {
+        name     = "ProductionSizeRestrictionRule"
+        priority = 3
+        action   = "block"
+        
+        statement = {
+          size_constraint_statement = {
+            field_to_match = {
+              body = {}
+            }
+            comparison_operator = "GT"
+            size               = 8192  # 8KB limit
+            text_transformations = [
+              {
+                priority = 0
+                type     = "NONE"
+              }
+            ]
+          }
+        }
+        
+        visibility_config = {
+          cloudwatch_metrics_enabled = true
+          metric_name                = "ProductionSizeRestrictionRule"
+          sampled_requests_enabled   = true
+        }
+      }
+    ]
+    
+    # IP sets for production
+    ip_sets = {
+      production_allowed_ips = {
+        name               = "production-allowed-ips"
+        description        = "Production allowed IP addresses"
+        scope              = "CLOUDFRONT"
+        ip_address_version = "IPV4"
+        addresses          = ["203.0.113.0/24"]  # Only corporate IPs
+      },
+      production_blocked_ips = {
+        name               = "production-blocked-ips"
+        description        = "Production blocked IP addresses"
+        scope              = "CLOUDFRONT"
+        ip_address_version = "IPV4"
+        addresses          = []  # Populated as needed
+      }
+    }
+    
+    # Comprehensive logging for production
+    enable_logging = true
+    log_destination_configs = [
+      {
+        resource_arn = "arn:aws:logs:us-east-1:221106935066:log-group:aws-waf-logs-production"
+      }
+    ]
+    
+    redacted_fields = [
+      {
+        single_header = {
+          name = "authorization"
+        }
+      },
+      {
+        single_header = {
+          name = "cookie"
+        }
+      }
+    ]
+    
+    tags = {
+      Purpose = "CloudFrontProtection"
+      Environment = "Production"
+      Compliance = "Required"
+      Backup = "Required"
+    }
+  }
+}

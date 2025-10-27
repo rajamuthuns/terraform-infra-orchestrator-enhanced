@@ -121,3 +121,77 @@ module "ec2_instance" {
     Purpose  = "Infrastructure-Orchestrator"
   }, try(each.value.tags, {}))
 }
+
+
+# CloudFront Distribution - Linked to ALB origins
+module "cloudfront" {
+  source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
+
+  for_each = var.cloudfront_spec
+
+  distribution_name     = each.value.distribution_name
+  origin_domain_name    = module.alb[each.value.alb_origin].alb_dns_name
+  ping_auth_cookie_name = try(each.value.ping_auth_cookie_name, "")
+  ping_redirect_url     = try(each.value.ping_redirect_url, "")
+
+  # Additional CloudFront configurations
+  price_class                = try(each.value.price_class, "PriceClass_100")
+  default_root_object        = try(each.value.default_root_object, "index.html")
+  compress                   = try(each.value.compress, true)
+  viewer_protocol_policy     = try(each.value.viewer_protocol_policy, "redirect-to-https")
+  allowed_methods           = try(each.value.allowed_methods, ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"])
+  cached_methods            = try(each.value.cached_methods, ["GET", "HEAD"])
+  
+  # Origin configuration
+  origin_protocol_policy     = try(each.value.origin_protocol_policy, "http-only")
+  origin_http_port          = try(each.value.origin_http_port, 80)
+  origin_https_port         = try(each.value.origin_https_port, 443)
+
+  tags = merge(var.common_tags, {
+    Environment = var.environment
+    Purpose     = "cloudfront-alb-integration"
+    ALBOrigin   = each.value.alb_origin
+  }, try(each.value.tags, {}))
+}
+
+# WAF - Linked to CloudFront distributions
+module "waf" {
+  source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git"
+
+  for_each = var.waf_spec
+
+  # Basic configuration
+  project     = var.project_name
+  environment = var.environment
+  scope       = each.value.scope # CLOUDFRONT for CloudFront, REGIONAL for ALB
+
+  # WAF rules configuration
+  enable_all_aws_managed_rules = try(each.value.enable_all_aws_managed_rules, false)
+  enabled_aws_managed_rules    = try(each.value.enabled_aws_managed_rules, [])
+  aws_managed_rule_overrides   = try(each.value.aws_managed_rule_overrides, {})
+  custom_rules                 = try(each.value.custom_rules, [])
+
+  # IP sets
+  ip_sets = try(each.value.ip_sets, {})
+
+  # Resource associations - Link to CloudFront or ALB based on scope
+  associated_resource_arns = each.value.scope == "CLOUDFRONT" ? [
+    for cf_key in each.value.protected_distributions : module.cloudfront[cf_key].distribution_arn
+  ] : [
+    for alb_key in each.value.protected_albs : module.alb[alb_key].alb_arn
+  ]
+
+  # Logging configuration
+  enable_logging          = try(each.value.enable_logging, false)
+  log_destination_configs = try(each.value.log_destination_configs, [])
+  redacted_fields        = try(each.value.redacted_fields, [])
+
+  # Tags
+  tags = merge(var.common_tags, {
+    Environment = var.environment
+    Scope       = each.value.scope
+  }, try(each.value.tags, {}))
+
+  # Ensure WAF is created after CloudFront distributions
+  depends_on = [module.cloudfront]
+}
