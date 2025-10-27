@@ -125,33 +125,7 @@ module "ec2_instance" {
 
 
 
-# CloudFront Distribution - Linked to ALB origins
-module "cloudfront" {
-  source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
-
-  for_each = var.cloudfront_spec
-
-  distribution_name     = each.value.distribution_name
-  origin_domain_name    = module.alb[each.value.alb_origin].alb_dns_name
-  ping_auth_cookie_name = try(each.value.ping_auth_cookie_name, "PingAccessToken")
-  ping_redirect_url     = each.value.ping_redirect_url
-
-  # CloudFront module supported parameters
-  allowed_methods = try(each.value.allowed_methods, ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"])
-  cached_methods  = try(each.value.cached_methods, ["GET", "HEAD"])
-  price_class     = try(each.value.price_class, "PriceClass_100")
-
-  # WAF Web ACL association - reference WAF module output
-  web_acl_id = try(each.value.waf_key, null) != null ? module.waf[each.value.waf_key].web_acl_arn : null
-
-  tags = merge(var.common_tags, {
-    Environment = var.environment
-    Purpose     = "cloudfront-alb-integration"
-    ALBOrigin   = each.value.alb_origin
-  }, try(each.value.tags, {}))
-}
-
-# WAF - Linked to CloudFront distributions with graceful error handling
+# WAF - Web Application Firewall (created before CloudFront)
 module "waf" {
   source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
 
@@ -202,23 +176,31 @@ module "waf" {
     Environment = var.environment
     Scope       = each.value.scope
   }, try(each.value.tags, {}))
-
-  # Ensure WAF is created after CloudFront distributions
-  depends_on = [module.cloudfront]
 }
 
-<<<<<<< HEAD
-=======
-# Local values for WAF-CloudFront mapping
-locals {
-  # Create a mapping of CloudFront distributions to their associated WAF Web ACLs
-  cloudfront_waf_mapping = {
-    for cf_key, cf_config in var.cloudfront_spec : cf_key => {
-      waf_key = try([
-        for waf_key, waf_config in var.waf_spec : waf_key
-        if waf_config.scope == "CLOUDFRONT" && contains(try(waf_config.protected_distributions, []), cf_key)
-      ][0], null)
-    }
-  }
+# CloudFront Distribution - Linked to ALB origins
+module "cloudfront" {
+  source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
+
+  for_each = var.cloudfront_spec
+
+  distribution_name     = each.value.distribution_name
+  origin_domain_name    = module.alb[each.value.alb_origin].alb_dns_name
+  ping_auth_cookie_name = try(each.value.ping_auth_cookie_name, "PingAccessToken")
+  ping_redirect_url     = each.value.ping_redirect_url
+
+  # CloudFront module supported parameters
+  allowed_methods = try(each.value.allowed_methods, ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"])
+  cached_methods  = try(each.value.cached_methods, ["GET", "HEAD"])
+  price_class     = try(each.value.price_class, "PriceClass_100")
+
+  # WAF Web ACL association - reference WAF module output
+  web_acl_id = try(each.value.waf_key, null) != null ? module.waf[each.value.waf_key].web_acl_arn : null
+
+  tags = merge(var.common_tags, {
+    Environment = var.environment
+    Purpose     = "cloudfront-alb-integration"
+    ALBOrigin   = each.value.alb_origin
+  }, try(each.value.tags, {}))
 }
->>>>>>> 2744dad5f56148a6f080ee4e990f28d99398ef91
+
