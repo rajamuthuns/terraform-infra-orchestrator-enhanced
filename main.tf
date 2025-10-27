@@ -54,6 +54,12 @@ module "alb" {
   # Required: VPC name (must match Name tag on your VPC)
   vpc_name = each.value.vpc_name
 
+  # Make ALB internal (private)
+  internal = try(each.value.internal, false)
+  
+  # Security: Restrict access to CloudFront IPs only
+  allowed_cidr_blocks = try(each.value.allowed_cidr_blocks, [])
+
   # Optional: Basic ALB settings
   http_enabled  = each.value.http_enabled
   https_enabled = each.value.https_enabled
