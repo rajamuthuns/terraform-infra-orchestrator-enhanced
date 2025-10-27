@@ -139,5 +139,11 @@ output "architecture_flow" {
         protected_resources = try(var.waf_spec[k].scope, "") == "CLOUDFRONT" ? try(var.waf_spec[k].protected_distributions, []) : try(var.waf_spec[k].protected_albs, [])
       }
     }
+    waf_associations = {
+      for k, v in aws_wafv2_web_acl_association.cloudfront_associations : k => {
+        resource_arn = v.resource_arn
+        web_acl_arn = v.web_acl_arn
+      }
+    }
   }
 }
