@@ -277,50 +277,35 @@ waf_spec = {
     # AWS Managed Rules - More comprehensive for staging
     enable_all_aws_managed_rules = false
     enabled_aws_managed_rules = [
-      "AWSManagedRulesCommonRuleSet",
-      "AWSManagedRulesKnownBadInputsRuleSet",
-      "AWSManagedRulesLinuxRuleSet",
-      "AWSManagedRulesWindowsRuleSet",
-      "AWSManagedRulesSQLiRuleSet",
-      "AWSManagedRulesWordPressRuleSet"
+      "common_rule_set",
+      "known_bad_inputs",
+      "linux_rule_set",
+      "sqli_rule_set",
+      "wordpress_rule_set"
     ]
     
     # Custom rules for staging
     custom_rules = [
       {
-        name     = "RateLimitRule"
-        priority = 1
-        action   = "block"
-        
-        statement = {
-          rate_based_statement = {
-            limit              = 1000  # Stricter than dev
-            aggregate_key_type = "IP"
-          }
-        }
-        
-        visibility_config = {
-          cloudwatch_metrics_enabled = true
-          metric_name                = "RateLimitRule"
-          sampled_requests_enabled   = true
-        }
+        name                       = "RateLimitRule"
+        priority                   = 1
+        action                     = "block"
+        type                       = "rate_based"
+        limit                      = 1000  # Stricter than dev
+        aggregate_key_type         = "IP"
+        cloudwatch_metrics_enabled = true
+        metric_name                = "RateLimitRule"
+        sampled_requests_enabled   = true
       },
       {
-        name     = "GeoBlockRule"
-        priority = 2
-        action   = "block"
-        
-        statement = {
-          geo_match_statement = {
-            country_codes = ["CN", "RU"]  # Block certain countries in staging
-          }
-        }
-        
-        visibility_config = {
-          cloudwatch_metrics_enabled = true
-          metric_name                = "GeoBlockRule"
-          sampled_requests_enabled   = true
-        }
+        name                       = "GeoBlockRule"
+        priority                   = 2
+        action                     = "block"
+        type                       = "geo_match"
+        country_codes              = ["CN", "RU"]  # Block certain countries in staging
+        cloudwatch_metrics_enabled = true
+        metric_name                = "GeoBlockRule"
+        sampled_requests_enabled   = true
       }
     ]
     
@@ -335,9 +320,7 @@ waf_spec = {
     # Logging configuration
     enable_logging = true
     log_destination_configs = [
-      {
-        resource_arn = "arn:aws:logs:us-east-1:137617557860:log-group:aws-waf-logs-staging"
-      }
+      "arn:aws:logs:us-east-1:137617557860:log-group:aws-waf-logs-staging"
     ]
     
     tags = {

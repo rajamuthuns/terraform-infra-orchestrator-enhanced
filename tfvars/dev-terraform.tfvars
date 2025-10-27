@@ -277,31 +277,23 @@ waf_spec = {
     # AWS Managed Rules
     enable_all_aws_managed_rules = false
     enabled_aws_managed_rules = [
-      "AWSManagedRulesCommonRuleSet",
-      "AWSManagedRulesKnownBadInputsRuleSet",
-      "AWSManagedRulesLinuxRuleSet",
-      "AWSManagedRulesWindowsRuleSet"
+      "common_rule_set",
+      "known_bad_inputs",
+      "linux_rule_set"
     ]
 
     # Custom rules for development
     custom_rules = [
       {
-        name     = "RateLimitRule"
-        priority = 1
-        action   = "block"
-
-        statement = {
-          rate_based_statement = {
-            limit              = 2000
-            aggregate_key_type = "IP"
-          }
-        }
-
-        visibility_config = {
-          cloudwatch_metrics_enabled = true
-          metric_name                = "RateLimitRule"
-          sampled_requests_enabled   = true
-        }
+        name                       = "RateLimitRule"
+        priority                   = 1
+        action                     = "block"
+        type                       = "rate_based"
+        limit                      = 2000
+        aggregate_key_type         = "IP"
+        cloudwatch_metrics_enabled = true
+        metric_name                = "RateLimitRule"
+        sampled_requests_enabled   = true
       }
     ]
 
@@ -316,9 +308,7 @@ waf_spec = {
     # Logging configuration
     enable_logging = true
     log_destination_configs = [
-      {
-        resource_arn = "arn:aws:logs:us-east-1:221106935066:log-group:aws-waf-logs-dev"
-      }
+      "arn:aws:logs:us-east-1:221106935066:log-group:aws-waf-logs-dev"
     ]
 
     tags = {

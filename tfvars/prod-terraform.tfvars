@@ -271,80 +271,38 @@ waf_spec = {
     # AWS Managed Rules - Comprehensive production security
     enable_all_aws_managed_rules = false
     enabled_aws_managed_rules = [
-      "AWSManagedRulesCommonRuleSet",
-      "AWSManagedRulesKnownBadInputsRuleSet",
-      "AWSManagedRulesLinuxRuleSet",
-      "AWSManagedRulesWindowsRuleSet",
-      "AWSManagedRulesSQLiRuleSet",
-      "AWSManagedRulesWordPressRuleSet",
-      "AWSManagedRulesAmazonIpReputationList",
-      "AWSManagedRulesAnonymousIpList",
-      "AWSManagedRulesBotControlRuleSet"
+      "common_rule_set",
+      "known_bad_inputs",
+      "linux_rule_set",
+      "sqli_rule_set",
+      "wordpress_rule_set",
+      "ip_reputation",
+      "anonymous_ip",
+      "bot_control"
     ]
     
     # Production custom rules
     custom_rules = [
       {
-        name     = "ProductionRateLimitRule"
-        priority = 1
-        action   = "block"
-        
-        statement = {
-          rate_based_statement = {
-            limit              = 500  # Strict rate limiting for production
-            aggregate_key_type = "IP"
-          }
-        }
-        
-        visibility_config = {
-          cloudwatch_metrics_enabled = true
-          metric_name                = "ProductionRateLimitRule"
-          sampled_requests_enabled   = true
-        }
+        name                       = "ProductionRateLimitRule"
+        priority                   = 1
+        action                     = "block"
+        type                       = "rate_based"
+        limit                      = 500  # Strict rate limiting for production
+        aggregate_key_type         = "IP"
+        cloudwatch_metrics_enabled = true
+        metric_name                = "ProductionRateLimitRule"
+        sampled_requests_enabled   = true
       },
       {
-        name     = "ProductionGeoBlockRule"
-        priority = 2
-        action   = "block"
-        
-        statement = {
-          geo_match_statement = {
-            country_codes = ["CN", "RU", "KP", "IR"]  # Block high-risk countries
-          }
-        }
-        
-        visibility_config = {
-          cloudwatch_metrics_enabled = true
-          metric_name                = "ProductionGeoBlockRule"
-          sampled_requests_enabled   = true
-        }
-      },
-      {
-        name     = "ProductionSizeRestrictionRule"
-        priority = 3
-        action   = "block"
-        
-        statement = {
-          size_constraint_statement = {
-            field_to_match = {
-              body = {}
-            }
-            comparison_operator = "GT"
-            size               = 8192  # 8KB limit
-            text_transformations = [
-              {
-                priority = 0
-                type     = "NONE"
-              }
-            ]
-          }
-        }
-        
-        visibility_config = {
-          cloudwatch_metrics_enabled = true
-          metric_name                = "ProductionSizeRestrictionRule"
-          sampled_requests_enabled   = true
-        }
+        name                       = "ProductionGeoBlockRule"
+        priority                   = 2
+        action                     = "block"
+        type                       = "geo_match"
+        country_codes              = ["CN", "RU", "KP", "IR"]  # Block high-risk countries
+        cloudwatch_metrics_enabled = true
+        metric_name                = "ProductionGeoBlockRule"
+        sampled_requests_enabled   = true
       }
     ]
     
@@ -363,9 +321,7 @@ waf_spec = {
     # Comprehensive logging for production
     enable_logging = true
     log_destination_configs = [
-      {
-        resource_arn = "arn:aws:logs:us-east-1:221106935066:log-group:aws-waf-logs-production"
-      }
+      "arn:aws:logs:us-east-1:221106935066:log-group:aws-waf-logs-production"
     ]
     
     redacted_fields = [
