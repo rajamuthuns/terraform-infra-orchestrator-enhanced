@@ -284,11 +284,11 @@ waf_spec = {
       "wordpress_rule_set"
     ]
     
-    # Custom rules for staging
+    # Custom rules for staging (priorities 11+ to avoid conflicts with AWS managed rules 1-10)
     custom_rules = [
       {
         name                       = "RateLimitRule"
-        priority                   = 1
+        priority                   = 11
         action                     = "block"
         type                       = "rate_based"
         limit                      = 1000  # Stricter than dev
@@ -299,7 +299,7 @@ waf_spec = {
       },
       {
         name                       = "GeoBlockRule"
-        priority                   = 2
+        priority                   = 12
         action                     = "block"
         type                       = "geo_match"
         country_codes              = ["CN", "RU"]  # Block certain countries in staging

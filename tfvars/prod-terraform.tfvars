@@ -281,11 +281,11 @@ waf_spec = {
       "bot_control"
     ]
     
-    # Production custom rules
+    # Production custom rules (priorities 11+ to avoid conflicts with AWS managed rules 1-10)
     custom_rules = [
       {
         name                       = "ProductionRateLimitRule"
-        priority                   = 1
+        priority                   = 11
         action                     = "block"
         type                       = "rate_based"
         limit                      = 500  # Strict rate limiting for production
@@ -296,7 +296,7 @@ waf_spec = {
       },
       {
         name                       = "ProductionGeoBlockRule"
-        priority                   = 2
+        priority                   = 12
         action                     = "block"
         type                       = "geo_match"
         country_codes              = ["CN", "RU", "KP", "IR"]  # Block high-risk countries
