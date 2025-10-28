@@ -60,49 +60,17 @@ data "aws_ec2_managed_prefix_list" "cloudfront" {
   }
 }
 
-# Get current CloudFront IP ranges as fallback, but limit them to avoid SG rule limits
-data "aws_ip_ranges" "cloudfront" {
-  regions  = ["global"]
-  services = ["cloudfront"]
-}
-
-# Local values for CloudFront access control with security group rule limit handling
 locals {
-  # CloudFront managed prefix list is always available with known ID
-  managed_prefix_list_available = true
-
-  all_cloudfront_ips = data.aws_ip_ranges.cloudfront.cidr_blocks
-
+  # CloudFront managed prefix list ID (known to exist)
   cloudfront_prefix_list_id = "pl-3b927c52"
 
-  max_cloudfront_rules = 50
-
-  consolidated_cloudfront_blocks = [
-    "13.32.0.0/15",    # Major CloudFront range
-    "52.84.0.0/15",    # Major CloudFront range
-    "54.230.0.0/16",   # Major CloudFront range
-    "99.84.0.0/16",    # Major CloudFront range
-    "205.251.192.0/19" # Major CloudFront range
-  ]
-  
-  # Limited set of current AWS ranges (first N ranges to stay under limit)
-  limited_current_ranges = slice(local.all_cloudfront_ips, 0, min(length(local.all_cloudfront_ips), local.max_cloudfront_rules))
-  
-
-  # Priority: 1) Managed prefix list, 2) Consolidated blocks, 3) Limited current ranges
-  cloudfront_cidr_blocks = local.managed_prefix_list_available ? [] : local.consolidated_cloudfront_blocks
-  
-  # Determine which method we're using for logging/debugging
-  access_control_method = local.managed_prefix_list_available ? "managed_prefix_list" : (
-    length(local.all_cloudfront_ips) <= local.max_cloudfront_rules ? 
-    "limited_current_ranges" : 
-    "consolidated_blocks"
-  )
 }
 
+# Random ID for unique S3 bucket naming
 resource "random_id" "bucket_suffix" {
   byte_length = 8
 }
+
 
 
 # ALB Module - Application Load Balancer with CloudFront IP restriction
@@ -122,18 +90,14 @@ module "alb" {
   http_enabled  = each.value.http_enabled
   https_enabled = each.value.https_enabled
 
-  # SECURITY ENHANCEMENT: Restrict ALB access to CloudFront IP ranges only
-  # This blocks direct internet access and forces traffic through CloudFront
-  # Strategy: Use managed prefix list (preferred) to avoid SG rule limits
-  
-  # Use empty CIDR blocks since we're using managed prefix list
+  # Managed prefix lists still count individual entries against the 60-rule limit
   http_ingress_cidr_blocks = []
   https_ingress_cidr_blocks = []
   
-  # Use AWS managed prefix list for CloudFront IPs (automatically updated by AWS)
-  # This avoids security group rule limits entirely - counts as only 1 rule
+  # Don't use managed prefix list due to rule count limitations (46 entries)
   http_ingress_prefix_list_ids = [local.cloudfront_prefix_list_id]
   https_ingress_prefix_list_ids = [local.cloudfront_prefix_list_id]
+
 
   # Health check configuration
   health_check_path    = try(each.value.health_check_path, "/")
@@ -155,7 +119,6 @@ module "alb" {
   # Temporarily disable access logs due to S3 bucket policy issues
   access_logs_enabled = false
  
-
 }
 
 # EC2 Module - Elastic Compute Cloud instances
