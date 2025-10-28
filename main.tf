@@ -55,7 +55,7 @@ data "aws_ip_ranges" "cloudfront" {
 
 # ALB Module - Application Load Balancer with CloudFront IP restriction
 module "alb" {
-  source = "https://github.com/purushothamgk-ns/tf-alb.git?ref=main"
+  source = "git::https://github.com/purushothamgk-ns/tf-alb.git?ref=main"
 
   for_each = var.alb_spec
 
