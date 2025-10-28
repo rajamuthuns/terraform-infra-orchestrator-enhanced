@@ -65,10 +65,20 @@ locals {
   cloudfront_prefix_list_id = "pl-3b927c52"
 
   cloudfront_iprange = [
-   "13.32.0.0/15",    # Major CloudFront range (covers 13.32.x.x and 13.33.x.x)
-    "52.84.0.0/15",    # Major CloudFront range (covers 52.84.x.x and 52.85.x.x)
-    "54.230.0.0/16"    # Major CloudFront range
+    "13.32.0.0/15",    # Covers 13.32.x.x and 13.33.x.x
+    "13.35.0.0/16",    # Additional 13.x range
+    "18.238.0.0/15",   # Covers 18.238.x.x and 18.239.x.x  
+    "52.84.0.0/15",    # Covers 52.84.x.x and 52.85.x.x
+    "54.182.0.0/16",   # CloudFront range
+    "54.192.0.0/16",   # CloudFront range
+    "54.230.0.0/16",   # Major CloudFront range
+    "54.239.128.0/18", # CloudFront range
+    "54.240.128.0/18", # CloudFront range
+    "99.84.0.0/16",    # CloudFront range
+    "130.176.0.0/16",  # CloudFront range
+    "205.251.192.0/19" # CloudFront range
   ]
+
 }
 
 # Random ID for unique S3 bucket naming
