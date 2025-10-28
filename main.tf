@@ -96,8 +96,8 @@ module "alb" {
   https_enabled = each.value.https_enabled
 
   # Managed prefix lists still count individual entries against the 60-rule limit
-  http_ingress_cidr_blocks = [local.cloudfront_iprange]
-  https_ingress_cidr_blocks = [local.cloudfront_iprange]
+  http_ingress_cidr_blocks = local.cloudfront_iprange
+  https_ingress_cidr_blocks = local.cloudfront_iprange
   
   # Don't use managed prefix list due to rule count limitations (46 entries)
   http_ingress_prefix_list_ids = []
