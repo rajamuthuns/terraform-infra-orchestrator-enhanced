@@ -48,6 +48,13 @@ ec2_spec = {
         protocol    = "tcp"
         cidr_blocks = ["10.0.0.0/8"]
         description = "SSH access from private networks"
+      },
+      {
+        from_port   = 80
+        to_port     = 80
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTP access from ALB for health checks and traffic"
       }
     ]
 
@@ -128,6 +135,13 @@ ec2_spec = {
         protocol    = "tcp"
         cidr_blocks = ["10.0.0.0/8"]
         description = "RDP access from private networks"
+      },
+      {
+        from_port   = 80
+        to_port     = 80
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTP access from ALB for health checks and traffic"
       }
     ]
 

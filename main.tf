@@ -99,9 +99,9 @@ module "alb" {
   http_enabled  = each.value.http_enabled
   https_enabled = each.value.https_enabled
 
-  # CloudFront IP restriction - Only allow CloudFront IPs to access ALB
-  http_ingress_cidr_blocks  = local.cloudfront_cidr_blocks
-  https_ingress_cidr_blocks = local.cloudfront_cidr_blocks
+  # Temporarily allow all traffic for debugging 504 error - REMOVE IN PRODUCTION
+  http_ingress_cidr_blocks  = ["0.0.0.0/0"]
+  https_ingress_cidr_blocks = ["0.0.0.0/0"]
 
   # Health check configuration
   health_check_path    = try(each.value.health_check_path, "/")
@@ -110,13 +110,15 @@ module "alb" {
   # Certificate for HTTPS
   certificate_arn = try(each.value.certificate_arn, "")
 
-  alb_access_logs_s3_bucket_force_destroy = true
-<<<<<<< HEAD
+  # Proper ALB naming
+  load_balancer_name = "${each.key}-${var.environment}"
+  
+  # Unique target group naming to avoid conflicts
   target_group_name = "${each.key}-${var.environment}-tg"
- 
-=======
+  
+  # Temporarily disable access logs due to S3 bucket policy issues
   access_logs_enabled = false
->>>>>>> f3ac7dcdd65f76ccada333487be48f692735fe17
+ 
 
 
 }
