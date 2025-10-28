@@ -2,20 +2,177 @@
 
 A **production-ready Terraform orchestrator** with GitOps workflow that acts as a wrapper around base infrastructure modules, enabling teams to build complex, multi-environment infrastructure using reusable components with automated branch-based promotion.
 
-## 🎯 What is This Repository?
+## What is This Repository?
 
 This repository is an **Infrastructure Orchestrator with GitOps Workflow** that:
 
-- 🧩 **Wraps base modules** - Downloads and orchestrates multiple Terraform base modules
-- 🏗️ **Simplifies infrastructure** - Provides high-level abstractions for complex deployments  
-- 🌍 **Multi-environment ready** - Supports dev, staging, and production with workspace isolation
-- 🔄 **GitOps branch promotion** - Automated dev → staging → production workflow
-- 📦 **Batch deployments** - Deploy multiple resources in one call using `for_each`
-- 🎛️ **Configuration-driven** - Define entire infrastructure through environment-specific tfvars files
-- 🛡️ **Built-in approvals** - Team reviews for staging/production, terraform apply approval for production
+- **Wraps base modules** - Downloads and orchestrates multiple Terraform base modules
+- **Simplifies infrastructure** - Provides high-level abstractions for complex deployments  
+- **Multi-environment ready** - Supports dev, staging, and production with workspace isolation
+- **GitOps branch promotion** - Automated dev → staging → production workflow
+- **Batch deployments** - Deploy multiple resources in one call using `for_each`
+- **Configuration-driven** - Define entire infrastructure through environment-specific tfvars files
+- **Built-in approvals** - Team reviews for staging/production, terraform apply approval for production
 
-## 🏗️ Architecture Overview
+## Current Solution: CloudFront + ALB + WAF Architecture
 
+This orchestrator currently deploys a **production-ready web application architecture** with:
+
+### **What's Deployed:**
+- **CloudFront CDN** - Global content delivery with SSL termination
+- **Application Load Balancer** - High-availability load balancing
+- **Web Application Firewall (WAF)** - Advanced security protection with AWS managed rules
+- **EC2 Instances** - Linux (Apache) and Windows (IIS) web servers
+- **Security Groups** - CloudFront-only access, no direct internet access
+
+### **Key Features:**
+- **SSL Termination at CloudFront** - Better performance, global SSL
+- **Automatic Scaling** - ALB with health checks and target groups
+- **Advanced Security** - WAF with SQL injection, XSS, bot protection, rate limiting, geo-blocking
+- **Multi-OS Support** - Both Linux and Windows web servers
+- **Zero-Downtime Deployments** - Blue-green deployment ready
+- **Comprehensive Logging** - WAF logs with configurable retention periods
+
+### **Traffic Flow:**
+```
+User → CloudFront (HTTPS/443) → ALB (HTTP/80) → EC2 (HTTP/80)
+       ↑                        ↑               ↑
+   SSL at Edge            Load Balancing    Web Servers
+   Global CDN             Health Checks     Auto-scaling
+   WAF Protection         Target Groups     Apache/IIS
+```
+
+## Web Application Firewall (WAF) Protection
+
+### **WAF Architecture:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    WAF Security Layers                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Internet Traffic                                           │
+│       │                                                     │
+│       ▼                                                     │
+│  ┌─────────────────┐                                        │
+│  │      WAF        │ ← Web Application Firewall            │
+│  │  (CloudFront)   │   • AWS Managed Rules                 │
+│  └─────────┬───────┘   • Custom Security Rules             │
+│            │           • Rate Limiting                     │
+│            │           • Geo-blocking                      │
+│            │           • Bot Protection                    │
+│            ▼                                               │
+│  ┌─────────────────┐                                        │
+│  │   CloudFront    │ ← Content Delivery Network            │
+│  │   Distribution  │   • Global Edge Locations             │
+│  └─────────┬───────┘   • SSL/TLS Termination               │
+│            │           • Caching & Performance             │
+│            ▼                                               │
+│  ┌─────────────────┐                                        │
+│  │      ALB        │ ← Application Load Balancer           │
+│  │   (HTTP/80)     │   • Health Checks                     │
+│  └─────────┬───────┘   • Target Group Management           │
+│            │                                               │
+│            ▼                                               │
+│  ┌─────────────────┐   ┌─────────────────┐                 │
+│  │   EC2 Linux     │   │  EC2 Windows    │ ← Web Servers   │
+│  │   (Apache)      │   │    (IIS)        │                 │
+│  └─────────────────┘   └─────────────────┘                 │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### **WAF Security Features:**
+
+#### **AWS Managed Rules (Enabled):**
+- **Common Rule Set** - Core web application protection
+- **Known Bad Inputs** - Malicious input patterns and payloads
+- **SQL Injection Protection** - Prevents SQL injection attacks
+- **Cross-Site Scripting (XSS)** - Blocks XSS attempts
+- **IP Reputation** - Blocks traffic from known malicious IPs
+- **Linux/Windows Rule Sets** - OS-specific attack protection
+- **Bot Control** - Advanced bot detection and mitigation
+- **Anonymous IP Blocking** - Blocks VPNs, proxies, Tor exit nodes
+
+#### **Custom Security Rules:**
+
+**Development Environment:**
+```hcl
+# Basic rate limiting
+rate_limit = 300 requests per 5 minutes per IP
+geo_blocking = ["CN", "RU", "KP", "IR", "SY"]
+logging_retention = 180 days
+```
+
+**Staging Environment:**
+```hcl
+# Production-like security testing
+rate_limit = 500 requests per 5 minutes per IP
+geo_blocking = ["CN", "RU", "KP"]
+logging_retention = 90 days
+suspicious_user_agents = blocked
+```
+
+**Production Environment:**
+```hcl
+# Maximum security configuration
+rate_limit = 200 requests per 5 minutes per IP
+geo_blocking = ["CN", "RU", "KP", "IR", "SY", "CU", "SD"]
+logging_retention = 365 days
+suspicious_user_agents = blocked
+malicious_ip_sets = comprehensive_blocking
+```
+
+#### **WAF Monitoring & Logging:**
+- **CloudWatch Metrics** - Real-time security metrics
+- **Sampled Requests** - Detailed request analysis
+- **Custom Dashboards** - Security monitoring dashboards
+- **Automated Alerts** - Threshold-based notifications
+- **Log Retention** - Environment-specific retention policies
+
+#### **IP Set Management:**
+```hcl
+# Trusted office IPs (allowed)
+trusted_office_ips = [
+  "203.0.113.0/24",    # Corporate office
+  "198.51.100.0/24",   # Branch office
+  "49.207.205.136/32"  # VPN gateway
+]
+
+# Blocked malicious IPs
+blocked_malicious_ips = [
+  "192.0.2.0/24"       # Known attack sources
+]
+
+# Partner/vendor IPs (production only)
+partner_ips = [
+  "203.0.114.0/24"     # Trusted partners
+]
+```
+
+### **WAF Configuration by Environment:**
+
+| Feature | Development | Staging | Production |
+|---------|-------------|---------|------------|
+| **Rate Limiting** | 300 req/5min | 500 req/5min | 200 req/5min |
+| **Geo-blocking** | 5 countries | 3 countries | 7 countries |
+| **AWS Managed Rules** | 7 rule sets | 7 rule sets | 10 rule sets |
+| **Custom Rules** | 2 rules | 2 rules | 3 rules |
+| **Log Retention** | 180 days | 90 days | 365 days |
+| **IP Sets** | 2 sets | 2 sets | 3 sets |
+| **Bot Protection** | Enabled | Enabled | Enhanced |
+
+### **WAF Benefits:**
+- **Multi-layer Security** - Protection at CloudFront edge
+- **Global Protection** - Security applied at all edge locations
+- **Low Latency** - Blocking happens at edge, not origin
+- **Scalable** - Handles traffic spikes automatically
+- **Visibility** - Comprehensive logging and monitoring
+- **Cost Effective** - Pay only for requests processed
+- **Manageable** - AWS managed rules with automatic updates
+
+## Architecture Overview
+
+### **Infrastructure Orchestrator Architecture**
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                 Terraform Orchestrator                      │
@@ -25,6 +182,10 @@ This repository is an **Infrastructure Orchestrator with GitOps Workflow** that:
 │  ├── main.tf              ← Orchestrates base modules      │
 │  ├── variables.tf         ← Variable definitions           │
 │  ├── outputs.tf           ← Output definitions             │
+│  ├── tf-*-base-module/    ← Local base modules             │
+│  │   ├── tf-alb-main/     ← ALB module                     │
+│  │   ├── tf-cf-base-module/ ← CloudFront module            │
+│  │   └── tf-waf-base-module/ ← WAF module                  │
 │  └── tfvars/              ← Environment configurations     │
 │      ├── dev-terraform.tfvars    ← Dev configs             │
 │      ├── stg-terraform.tfvars    ← Staging configs         │
@@ -34,13 +195,74 @@ This repository is an **Infrastructure Orchestrator with GitOps Workflow** that:
 ┌─────────────────────▼───────────────────────────────────────┐
 │                 Base Modules                                │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐ │
-│  │   EC2 Module    │  │   ALB Module    │  │  RDS Module  │ │
-│  │ (External Repo) │  │ (External Repo) │  │(External Repo│ │
+│  │   EC2 Module    │  │   ALB Module    │  │ CloudFront   │ │
+│  │ (External Repo) │  │  (Local)        │  │   (Local)    │ │
 │  └─────────────────┘  └─────────────────┘  └──────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 📁 Repository Structure
+### **Current Deployment Architecture**
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Production Traffic Flow                  │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  User (Browser)                                             │
+│       │ HTTPS/443                                           │
+│       ▼                                                     │
+│  ┌─────────────────┐                                        │
+│  │   CloudFront    │ ← Global CDN with SSL termination     │
+│  │   (HTTPS/443)   │   • SSL certificates                  │
+│  └─────────┬───────┘   • Global edge locations             │
+│            │ HTTP/80   • DDoS protection                   │
+│            ▼           • Caching                           │
+│  ┌─────────────────┐                                        │
+│  │      ALB        │ ← Application Load Balancer           │
+│  │   (HTTP/80)     │   • SSL termination at CloudFront    │
+│  └─────────┬───────┘   • Health checks                     │
+│            │ HTTP/80   • Target group management           │
+│            ▼                                               │
+│  ┌─────────────────┐   ┌─────────────────┐                 │
+│  │   EC2 Linux     │   │  EC2 Windows    │ ← Web servers   │
+│  │   (Apache/80)   │   │   (IIS/80)      │   • HTTP only   │
+│  └─────────────────┘   └─────────────────┘   • Auto-scaling│
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### **Security Architecture**
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Security Layers                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────────┐                                        │
+│  │      WAF        │ ← Web Application Firewall            │
+│  │  (CloudFront)   │   • SQL injection protection         │
+│  └─────────┬───────┘   • XSS protection                    │
+│            │           • Rate limiting                     │
+│            ▼           • Geo-blocking                      │
+│  ┌─────────────────┐                                        │
+│  │   CloudFront    │ ← Content Delivery Network            │
+│  │  Security Groups│   • DDoS protection                   │
+│  └─────────┬───────┘   • SSL/TLS encryption               │
+│            │           • Origin access control            │
+│            ▼                                               │
+│  ┌─────────────────┐                                        │
+│  │      ALB        │ ← Load Balancer Security              │
+│  │  Security Groups│   • CloudFront IP whitelist          │
+│  └─────────┬───────┘   • No direct internet access        │
+│            │           • VPC isolation                    │
+│            ▼                                               │
+│  ┌─────────────────┐   ┌─────────────────┐                 │
+│  │   EC2 Linux     │   │  EC2 Windows    │ ← Instance Security│
+│  │  Security Groups│   │ Security Groups │   • Private subnets│
+│  └─────────────────┘   └─────────────────┘   • ALB access only│
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Repository Structure
 
 ```
 terraform-infra-orchestrator/
@@ -71,7 +293,7 @@ terraform-infra-orchestrator/
 └── .gitignore                         # Git ignore rules
 ```
 
-## 🌍 GitOps Branch Structure and Workflow
+## GitOps Branch Structure and Workflow
 
 ### **Branch-Environment Mapping**
 Each branch corresponds to a specific environment and uses the appropriate tfvars file:
@@ -113,7 +335,7 @@ production branch → Production environment   → tfvars/prod-terraform.tfvars
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Clone and Setup
 ```bash
@@ -148,7 +370,7 @@ git push origin dev
 # 3. Creates PR to production (uses tfvars/prod-terraform.tfvars)
 ```
 
-## 🧩 How Base Module Integration Works
+## How Base Module Integration Works
 
 ### **Module Download and Usage**
 The orchestrator automatically downloads and uses base modules:
@@ -209,7 +431,7 @@ ec2_spec = {
 }
 ```
 
-## 🔗 Module Linking and Reference Variables
+## Module Linking and Reference Variables
 
 ### **Linking Modules Together**
 Connect modules using reference variables and outputs:
@@ -239,11 +461,42 @@ module "ec2_instance" {
 ### **Cross-Module References in tfvars**
 ```hcl
 # tfvars/dev-terraform.tfvars
-# Define ALB first
+# Define WAF first
+waf_spec = {
+  cloudfront-waf = {
+    scope = "CLOUDFRONT"
+    enabled_aws_managed_rules = [
+      "common_rule_set",
+      "sqli_rule_set", 
+      "bot_control"
+    ]
+    custom_rules = [
+      {
+        name = "RateLimit"
+        priority = 11
+        action = "block"
+        type = "rate_based"
+        limit = 300
+      }
+    ]
+  }
+}
+
+# Define ALB
 alb_spec = {
   web-alb = {
     name = "web-alb"
     vpc_name = "dev-vpc"
+  }
+}
+
+# Reference ALB and WAF in CloudFront configuration
+cloudfront_spec = {
+  web-cf = {
+    distribution_name = "web-app-distribution"
+    alb_origin = "web-alb"           # References the ALB above
+    waf_key = "cloudfront-waf"       # References the WAF above
+    price_class = "PriceClass_100"
   }
 }
 
@@ -258,7 +511,7 @@ ec2_spec = {
 }
 ```
 
-## 📦 Adding New Base Modules
+## Adding New Base Modules
 
 ### **Step 1: Add Module to main.tf**
 ```hcl
@@ -340,7 +593,7 @@ rds_spec = {
 }
 ```
 
-## 🌍 Multi-Environment Management
+## Multi-Environment Management
 
 ### **Common Backend with Workspace Isolation**
 All environments use a single S3 bucket and DynamoDB table with Terraform workspaces for isolation:
@@ -392,7 +645,7 @@ name = "${each.value.name}-${var.environment}"
 # Prod: web-server-prod, database-prod
 ```
 
-## 🔄 Batch Deployments with for_each
+## Batch Deployments with for_each
 
 ### **Deploy Multiple Resources in One Call**
 ```hcl
@@ -419,7 +672,7 @@ ec2_spec = {
 }
 ```
 
-## 🎛️ Advanced Configuration Patterns
+## Advanced Configuration Patterns
 
 ### **Environment-Specific Sizing**
 ```hcl
@@ -473,7 +726,7 @@ ec2_spec = {
 }
 ```
 
-## 📝 Development Workflow
+## Development Workflow
 
 ### **Step 1: Create All Environment Configurations**
 ```bash
@@ -605,7 +858,7 @@ git push origin dev
 # GitOps workflow will promote the updated configs automatically
 ```
 
-## 🚀 Deployment Workflows
+## Deployment Workflows
 
 ### **GitOps Development**
 ```bash
@@ -637,7 +890,7 @@ make staging  # Deploy to staging
 make prod     # Deploy to production
 ```
 
-## 🛠️ Customization and Extension
+## Customization and Extension
 
 ### **Adding Custom User Data**
 ```bash
@@ -666,27 +919,27 @@ module "custom_monitoring" {
 }
 ```
 
-## 📋 Best Practices
+## Best Practices
 
 ### **Configuration Management**
-- ✅ **Keep main.tf environment-agnostic** - Same logic across environments
-- ✅ **Use environment-specific tfvars** - Different values per environment
-- ✅ **Leverage for_each for scaling** - Deploy multiple resources efficiently
-- ✅ **Use reference variables** - Link modules together cleanly
+- **Keep main.tf environment-agnostic** - Same logic across environments
+- **Use environment-specific tfvars** - Different values per environment
+- **Leverage for_each for scaling** - Deploy multiple resources efficiently
+- **Use reference variables** - Link modules together cleanly
 
 ### **Module Organization**
-- ✅ **One concern per module** - EC2, ALB, RDS as separate modules
-- ✅ **Consistent naming** - Use environment suffixes everywhere
-- ✅ **Output important values** - Make module outputs available for linking
-- ✅ **Version your modules** - Pin to specific versions for stability
+- **One concern per module** - EC2, ALB, RDS as separate modules
+- **Consistent naming** - Use environment suffixes everywhere
+- **Output important values** - Make module outputs available for linking
+- **Version your modules** - Pin to specific versions for stability
 
 ### **Environment Strategy**
-- ✅ **Start with dev** - Test configurations in development first
-- ✅ **Promote through environments** - Dev → Staging → Production
-- ✅ **Use workspaces** - Isolate state between environments
-- ✅ **Automate with GitOps** - Use GitHub Actions for deployments
+- **Start with dev** - Test configurations in development first
+- **Promote through environments** - Dev → Staging → Production
+- **Use workspaces** - Isolate state between environments
+- **Automate with GitOps** - Use GitHub Actions for deployments
 
-## 🔄 Pipeline and Deployment Guide
+## Pipeline and Deployment Guide
 
 ### **Pipeline Triggers and Workflow**
 
@@ -711,9 +964,9 @@ You can manually trigger the pipeline from any branch:
 ### **Environment Protection and Approvals**
 
 #### **Current Configuration:**
-- **Dev Environment**: ✅ No approval required, auto-deploys
-- **Staging Environment**: ⚠️ **Requires GitHub Environment Protection Setup**
-- **Production Environment**: ⚠️ **Requires GitHub Environment Protection Setup**
+- **Dev Environment**: No approval required, auto-deploys
+- **Staging Environment**: **Requires GitHub Environment Protection Setup**
+- **Production Environment**: **Requires GitHub Environment Protection Setup**
 
 #### **Setting Up Environment Protection and Approvers:**
 
@@ -727,25 +980,25 @@ You can manually trigger the pipeline from any branch:
    **For Staging Environment:**
    ```
    Environment name: staging
-   ✅ Required reviewers: Add your team members
-   ✅ Wait timer: 0 minutes (or set delay)
-   ✅ Deployment branches: Only staging branch
+   Required reviewers: Add your team members
+   Wait timer: 0 minutes (or set delay)
+   Deployment branches: Only staging branch
    ```
 
    **For Production Environment:**
    ```
    Environment name: production
-   ✅ Required reviewers: Add senior team members/leads
-   ✅ Wait timer: 5 minutes (cooling period)
-   ✅ Deployment branches: Only production branch
+   Required reviewers: Add senior team members/leads
+   Wait timer: 5 minutes (cooling period)
+   Deployment branches: Only production branch
    ```
 
    **For Production Apply Approval:**
    ```
    Environment name: production-apply-approval
-   ✅ Required reviewers: Add infrastructure team leads
-   ✅ Wait timer: 0 minutes
-   ✅ Deployment branches: Only production branch
+   Required reviewers: Add infrastructure team leads
+   Wait timer: 0 minutes
+   Deployment branches: Only production branch
    ```
 
 3. **Add Reviewers**:
@@ -854,7 +1107,7 @@ After successful deployment, check the workflow summary for:
 ### **Troubleshooting Common Issues**
 
 #### **S3 Bucket Errors:**
-- ✅ **Fixed**: Pipeline now automatically creates S3 buckets
+- **Fixed**: Pipeline now automatically creates S3 buckets
 - If still occurring: Run workflow with `setup-only` action first
 
 #### **Backend Configuration Issues:**
@@ -870,7 +1123,7 @@ After successful deployment, check the workflow summary for:
 - Verify `PRIVATE_REPO_TOKEN` has access to module repositories
 - Check module repository URLs in main.tf
 
-## 📚 Documentation
+## Documentation
 
 - **[GitOps Setup Guide](docs/GITOPS_SETUP.md)** - Detailed setup instructions for GitOps workflow
 - **[Environment-Specific Configurations](docs/ENVIRONMENT_SPECIFIC_CONFIGS.md)** - Managing different VPCs, configs per environment
@@ -879,7 +1132,7 @@ After successful deployment, check the workflow summary for:
 - **[GitHub Actions Setup](docs/GITHUB_ACTIONS_SETUP.md)** - GitHub Actions configuration guide
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 
-## 🆘 Getting Help
+## Getting Help
 
 ### **Common Tasks**
 - **Adding new modules**: Follow the "Adding New Base Modules" section
@@ -893,16 +1146,16 @@ After successful deployment, check the workflow summary for:
 - **Environment issues**: Confirm workspace and tfvars file settings
 - **Deployment failures**: Check logs and module documentation
 
-## 🎯 Summary
+## Summary
 
 This GitOps Terraform Infrastructure Orchestrator enables you to:
 
-1. **🧩 Orchestrate multiple base modules** with minimal configuration
-2. **🔄 Deploy batch resources** using for_each patterns  
-3. **🔗 Link modules together** using reference variables
-4. **🌍 Manage multiple environments** with workspace isolation and GitOps promotion
-5. **📦 Add new modules easily** following established patterns
-6. **🎛️ Configure everything** through environment-specific tfvars files
-7. **🚀 Automate deployments** with GitOps branch-based promotion workflow
+1. **Orchestrate multiple base modules** with minimal configuration
+2. **Deploy batch resources** using for_each patterns  
+3. **Link modules together** using reference variables
+4. **Manage multiple environments** with workspace isolation and GitOps promotion
+5. **Add new modules easily** following established patterns
+6. **Configure everything** through environment-specific tfvars files
+7. **Automate deployments** with GitOps branch-based promotion workflow
 
-**Start building your infrastructure today** - clone this repository, configure your environment-specific tfvars files, and commit to dev branch! 🚀
+**Start building your infrastructure today** - clone this repository, configure your environment-specific tfvars files, and commit to dev branch!
