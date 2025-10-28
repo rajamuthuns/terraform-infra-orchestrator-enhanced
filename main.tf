@@ -146,11 +146,12 @@ module "alb" {
   http_enabled  = each.value.http_enabled
   https_enabled = each.value.https_enabled  
  
-  # CloudFront-only access for enhanced security
-  http_ingress_cidr_blocks = local.cloudfront_cidr_blocks
-  https_ingress_cidr_blocks = local.cloudfront_cidr_blocks
+# Use consolidated CIDR blocks if prefix list not available, otherwise empty
+  http_ingress_cidr_blocks = local.managed_prefix_list_available ? [] : local.consolidated_cloudfront_blocks
+  https_ingress_cidr_blocks = local.managed_prefix_list_available ? [] : local.consolidated_cloudfront_blocks
   
   # Use AWS managed prefix list for CloudFront IPs (automatically updated by AWS)
+  # This avoids security group rule limits entirely - counts as only 1 rule
   http_ingress_prefix_list_ids = local.managed_prefix_list_available ? [data.aws_ec2_managed_prefix_list.cloudfront[0].id] : []
   https_ingress_prefix_list_ids = local.managed_prefix_list_available ? [data.aws_ec2_managed_prefix_list.cloudfront[0].id] : []
 
