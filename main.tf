@@ -45,11 +45,6 @@ provider "aws" {
   }
 }
 
-# Data source to get CloudFront IP ranges
-data "aws_ip_ranges" "cloudfront" {
-  regions  = ["global"]
-  services = ["cloudfront"]
-}
 
 # Try to get AWS managed prefix list for CloudFront (preferred method)
 data "aws_ec2_managed_prefix_list" "cloudfront" {
