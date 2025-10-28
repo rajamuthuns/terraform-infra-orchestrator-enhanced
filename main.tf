@@ -68,53 +68,29 @@ data "aws_ip_ranges" "cloudfront" {
 
 # Local values for CloudFront access control with security group rule limit handling
 locals {
-  # Check if managed prefix list is available (preferred method)
-  managed_prefix_list_available = try(data.aws_ec2_managed_prefix_list.cloudfront[0].id, null) != null
-  
-  # Get all current CloudFront IP ranges
+  # CloudFront managed prefix list is always available with known ID
+  managed_prefix_list_available = true
+
   all_cloudfront_ips = data.aws_ip_ranges.cloudfront.cidr_blocks
-  
-  # AWS Security Group limit is 60 rules per group
-  # Reserve some rules for other traffic, so use max 50 for CloudFront
+
+  cloudfront_prefix_list_id = "pl-3b927c52"
+
   max_cloudfront_rules = 50
-  
-  # Strategy 1: Use managed prefix list (best option - no rule limit issues)
-  # Strategy 2: Use consolidated major CIDR blocks (manual but reliable)
-  # Strategy 3: Use limited set of current AWS ranges (dynamic but limited)
-  
-  # Consolidated major CloudFront CIDR blocks (covers most traffic, stays under limits)
+
   consolidated_cloudfront_blocks = [
-    "13.32.0.0/15",    # Covers 13.32.0.0/16 and 13.33.0.0/16
-    "13.35.0.0/16",
-    "18.238.0.0/15",   # Covers 18.238.0.0/16 and 18.239.0.0/16
-    "52.84.0.0/15",    # Covers 52.84.0.0/16 and 52.85.0.0/16
-    "54.182.0.0/16",
-    "54.192.0.0/16",
-    "54.230.0.0/16",
-    "54.239.128.0/18",
-    "54.240.128.0/18",
-    "99.84.0.0/16",
-    "130.176.0.0/16",
-    "204.246.164.0/22",
-    "204.246.168.0/22",
-    "204.246.174.0/23",
-    "204.246.176.0/20",
-    "205.251.192.0/19",
-    "205.251.249.0/24",
-    "205.251.250.0/23",
-    "205.251.252.0/23",
-    "205.251.254.0/24"
+    "13.32.0.0/15",    # Major CloudFront range
+    "52.84.0.0/15",    # Major CloudFront range
+    "54.230.0.0/16",   # Major CloudFront range
+    "99.84.0.0/16",    # Major CloudFront range
+    "205.251.192.0/19" # Major CloudFront range
   ]
   
   # Limited set of current AWS ranges (first N ranges to stay under limit)
   limited_current_ranges = slice(local.all_cloudfront_ips, 0, min(length(local.all_cloudfront_ips), local.max_cloudfront_rules))
   
-  # Choose the best strategy based on availability and rule count
-  cloudfront_cidr_blocks = local.managed_prefix_list_available ? [] : (
-    length(local.all_cloudfront_ips) <= local.max_cloudfront_rules ? 
-    local.limited_current_ranges : 
-    local.consolidated_cloudfront_blocks
-  )
+
+  # Priority: 1) Managed prefix list, 2) Consolidated blocks, 3) Limited current ranges
+  cloudfront_cidr_blocks = local.managed_prefix_list_available ? [] : local.consolidated_cloudfront_blocks
   
   # Determine which method we're using for logging/debugging
   access_control_method = local.managed_prefix_list_available ? "managed_prefix_list" : (
@@ -134,7 +110,7 @@ module "alb" {
 
   source = "git::https://github.com/purushothamgk-ns/tf-alb.git"
 
-    for_each = var.alb_spec
+  for_each = var.alb_spec
 
   # VPC configuration - use vpc_name for automatic discovery
   vpc_name = each.value.vpc_name
@@ -144,16 +120,20 @@ module "alb" {
 
   # Basic ALB settings
   http_enabled  = each.value.http_enabled
-  https_enabled = each.value.https_enabled  
- 
-# Use consolidated CIDR blocks if prefix list not available, otherwise empty
-  http_ingress_cidr_blocks = local.managed_prefix_list_available ? [] : local.consolidated_cloudfront_blocks
-  https_ingress_cidr_blocks = local.managed_prefix_list_available ? [] : local.consolidated_cloudfront_blocks
+  https_enabled = each.value.https_enabled
+
+  # SECURITY ENHANCEMENT: Restrict ALB access to CloudFront IP ranges only
+  # This blocks direct internet access and forces traffic through CloudFront
+  # Strategy: Use managed prefix list (preferred) to avoid SG rule limits
+  
+  # Use empty CIDR blocks since we're using managed prefix list
+  http_ingress_cidr_blocks = []
+  https_ingress_cidr_blocks = []
   
   # Use AWS managed prefix list for CloudFront IPs (automatically updated by AWS)
   # This avoids security group rule limits entirely - counts as only 1 rule
-  http_ingress_prefix_list_ids = local.managed_prefix_list_available ? [data.aws_ec2_managed_prefix_list.cloudfront[0].id] : []
-  https_ingress_prefix_list_ids = local.managed_prefix_list_available ? [data.aws_ec2_managed_prefix_list.cloudfront[0].id] : []
+  http_ingress_prefix_list_ids = [local.cloudfront_prefix_list_id]
+  https_ingress_prefix_list_ids = [local.cloudfront_prefix_list_id]
 
   # Health check configuration
   health_check_path    = try(each.value.health_check_path, "/")
