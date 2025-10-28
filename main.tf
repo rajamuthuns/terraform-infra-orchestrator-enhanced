@@ -51,6 +51,32 @@ data "aws_ip_ranges" "cloudfront" {
   services = ["cloudfront"]
 }
 
+locals {
+  # Use only the major CloudFront IP blocks to stay within security group limits
+  cloudfront_cidr_blocks = [
+    "13.32.0.0/15",
+    "13.35.0.0/16",
+    "18.238.0.0/15",
+    "52.84.0.0/15",
+    "54.182.0.0/16",
+    "54.192.0.0/16",
+    "54.230.0.0/16",
+    "54.239.128.0/18",
+    "54.240.128.0/18",
+    "99.84.0.0/16",
+    "130.176.0.0/16",
+    "204.246.164.0/22",
+    "204.246.168.0/22",
+    "204.246.174.0/23",
+    "204.246.176.0/20",
+    "205.251.192.0/19",
+    "205.251.249.0/24",
+    "205.251.250.0/23",
+    "205.251.252.0/23",
+    "205.251.254.0/24"
+  ]
+}
+
 
 
 # ALB Module - Application Load Balancer with CloudFront IP restriction
@@ -70,8 +96,8 @@ module "alb" {
   https_enabled = each.value.https_enabled
 
   # CloudFront IP restriction - Only allow CloudFront IPs to access ALB
-  http_ingress_cidr_blocks  = data.aws_ip_ranges.cloudfront.cidr_blocks
-  https_ingress_cidr_blocks = data.aws_ip_ranges.cloudfront.cidr_blocks
+  http_ingress_cidr_blocks  = local.cloudfront_cidr_blocks
+  https_ingress_cidr_blocks = local.cloudfront_cidr_blocks
 
   # Health check configuration
   health_check_path    = try(each.value.health_check_path, "/")
