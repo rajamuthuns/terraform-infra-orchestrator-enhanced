@@ -280,6 +280,7 @@ cloudfront_spec = {
 waf_spec = {
   cloudfront-waf = {
     scope = "CLOUDFRONT" # For CloudFront distributions
+    default_action = "allow"  # Allow by default, block with specific rules
 
     # Comprehensive AWS Managed Rules for maximum protection
     enable_all_aws_managed_rules = false
