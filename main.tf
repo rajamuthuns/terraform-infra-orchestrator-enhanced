@@ -114,7 +114,7 @@ module "alb" {
   alb_access_logs_s3_bucket_force_destroy = true
   
   # Add context for unique naming
-  namespace = "${var.project_name}-${local.timestamp}-${random_id.bucket_suffix.hex}"
+  namespace = "${var.project_name}-${random_id.bucket_suffix.hex}"
   environment = var.environment
   name = each.value.name
 
