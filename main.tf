@@ -51,39 +51,19 @@ data "aws_ip_ranges" "cloudfront" {
   services = ["cloudfront"]
 }
 
-# Data sources for VPC and subnets
-data "aws_vpc" "selected" {
-  for_each = var.alb_spec
-  
-  filter {
-    name   = "tag:Name"
-    values = [each.value.vpc_name]
-  }
-}
 
-data "aws_subnets" "public" {
-  for_each = var.alb_spec
-  
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.selected[each.key].id]
-  }
-  
-  filter {
-    name   = "tag:Name"
-    values = ["*public*"]
-  }
-}
 
 # ALB Module - Application Load Balancer with CloudFront IP restriction
 module "alb" {
-  source = "https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb.git?ref=main"
+  source = "https://github.com/purushothamgk-ns/tf-alb.git?ref=main"
 
   for_each = var.alb_spec
 
-  # Required: VPC and subnet configuration
-  vpc_id     = data.aws_vpc.selected[each.key].id
-  subnet_ids = data.aws_subnets.public[each.key].ids
+  # VPC configuration - use vpc_name for automatic discovery
+  vpc_name = each.value.vpc_name
+  
+  # Auto-discover public subnets
+  auto_discover_public_subnets = true
 
   # Basic ALB settings
   http_enabled  = each.value.http_enabled
@@ -100,10 +80,8 @@ module "alb" {
   # Certificate for HTTPS
   certificate_arn = try(each.value.certificate_arn, "")
 
-  # Naming context
-  namespace   = each.key
-  environment = var.environment
-  name        = each.value.name
+  # Force destroy S3 bucket for ALB logs
+  alb_access_logs_s3_bucket_force_destroy = true
 }
 
 # EC2 Module - Elastic Compute Cloud instances
