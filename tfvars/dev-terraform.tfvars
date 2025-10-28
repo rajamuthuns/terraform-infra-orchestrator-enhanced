@@ -27,7 +27,7 @@ alb_spec = {
     https_enabled         = true
     certificate_arn       = "arn:aws:acm:us-east-1:221106935066:certificate/e1ace7b1-f324-4ac6-aff3-7ec67edc8622"
     name                  = "windows-alb"
-    health_check_path     = "/health"
+    health_check_path     = "/health.txt"
     health_check_matcher  = "200"
     target_group_port     = 80
     target_group_protocol = "HTTP"
@@ -241,7 +241,7 @@ ec2_spec = {
 cloudfront_spec = {
   linux-cf = {
     distribution_name     = "linux-app-distribution"
-    alb_origin            = "linux-alb" # References the ALB module key
+    alb_origin            = "linux-alb"      # References the ALB module key
     waf_key               = "cloudfront-waf" # References the WAF module key
     price_class           = "PriceClass_100"
     ping_auth_cookie_name = "PingAuthCookie"
@@ -259,7 +259,7 @@ cloudfront_spec = {
 
   windows-cf = {
     distribution_name     = "windows-app-distribution"
-    alb_origin            = "windows-alb" # References the ALB module key
+    alb_origin            = "windows-alb"    # References the ALB module key
     waf_key               = "cloudfront-waf" # References the WAF module key
     price_class           = "PriceClass_100"
     ping_auth_cookie_name = "PingAuthCookie"
@@ -279,18 +279,18 @@ cloudfront_spec = {
 # WAF Configuration Specifications - Production-Grade Security
 waf_spec = {
   cloudfront-waf = {
-    scope = "CLOUDFRONT"  # For CloudFront distributions
+    scope = "CLOUDFRONT" # For CloudFront distributions
 
     # Comprehensive AWS Managed Rules for maximum protection
     enable_all_aws_managed_rules = false
     enabled_aws_managed_rules = [
-      "common_rule_set",      # Core protection
-      "known_bad_inputs",     # Malicious input protection
-      "sqli_rule_set",        # SQL injection protection
-      "ip_reputation",        # Bad IP blocking
-      "linux_rule_set",       # Linux-specific attacks
-      "bot_control",          # Bot protection
-      "anonymous_ip"          # Anonymous IP blocking
+      "common_rule_set",  # Core protection
+      "known_bad_inputs", # Malicious input protection
+      "sqli_rule_set",    # SQL injection protection
+      "ip_reputation",    # Bad IP blocking
+      "linux_rule_set",   # Linux-specific attacks
+      "bot_control",      # Bot protection
+      "anonymous_ip"      # Anonymous IP blocking
     ]
 
     # Production-grade custom rules with layered security
@@ -300,7 +300,7 @@ waf_spec = {
         priority                   = 11
         action                     = "block"
         type                       = "rate_based"
-        limit                      = 300  # 300 requests per 5 minutes
+        limit                      = 300 # 300 requests per 5 minutes
         aggregate_key_type         = "IP"
         cloudwatch_metrics_enabled = true
         metric_name                = "AggressiveRateLimit"
@@ -311,7 +311,7 @@ waf_spec = {
         priority                   = 12
         action                     = "block"
         type                       = "geo_match"
-        country_codes              = ["CN", "RU", "KP", "IR", "SY"]  # Expanded high-risk countries
+        country_codes              = ["CN", "RU", "KP", "IR", "SY"] # Expanded high-risk countries
         cloudwatch_metrics_enabled = true
         metric_name                = "GeoBlockHighRisk"
         sampled_requests_enabled   = true
@@ -323,23 +323,23 @@ waf_spec = {
       trusted_office_ips = {
         ip_address_version = "IPV4"
         addresses = [
-          "203.0.113.0/24",    # Corporate office (update with your real IPs)
-          "198.51.100.0/24",    # Branch office (update with your real IPs)
+          "203.0.113.0/24",  # Corporate office (update with your real IPs)
+          "198.51.100.0/24", # Branch office (update with your real IPs)
           "49.207.205.136/32"
         ]
       },
       blocked_malicious_ips = {
         ip_address_version = "IPV4"
         addresses = [
-          "192.0.2.0/24"       # Known malicious range
+          "192.0.2.0/24" # Known malicious range
         ]
       }
     }
 
     # Production logging configuration
-    enable_logging = true
-    log_retention_days = 180  # 6 months retention for compliance
-    
+    enable_logging     = true
+    log_retention_days = 180 # 6 months retention for compliance
+
     # Privacy-compliant redacted fields
     redacted_fields = [
       {
