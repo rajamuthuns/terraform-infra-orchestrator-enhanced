@@ -172,3 +172,17 @@ output "cloudwatch_log_groups" {
     } if try(var.waf_spec[k].enable_logging, false)
   }
 }
+
+# CloudFront Security Configuration Details
+output "cloudfront_security_config" {
+  description = "Details about CloudFront IP access control configuration"
+  value = {
+    access_control_method = local.access_control_method
+    managed_prefix_list_available = local.managed_prefix_list_available
+    managed_prefix_list_id = local.managed_prefix_list_available ? data.aws_ec2_managed_prefix_list.cloudfront[0].id : null
+    total_aws_cloudfront_ranges = length(local.all_cloudfront_ips)
+    cidr_blocks_used = length(local.cloudfront_cidr_blocks)
+    security_group_rule_limit = local.max_cloudfront_rules
+    within_sg_limits = length(local.cloudfront_cidr_blocks) <= local.max_cloudfront_rules
+  }
+}

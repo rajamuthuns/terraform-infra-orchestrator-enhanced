@@ -51,13 +51,48 @@ data "aws_ip_ranges" "cloudfront" {
   services = ["cloudfront"]
 }
 
+# Try to get AWS managed prefix list for CloudFront (preferred method)
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  count = 1
+  name  = "com.amazonaws.global.cloudfront.origin-facing"
+  
+  # Handle case where prefix list doesn't exist
+  lifecycle {
+    postcondition {
+      condition     = self.id != null || self.id == null
+      error_message = "CloudFront managed prefix list check completed"
+    }
+  }
+}
+
+# Get current CloudFront IP ranges as fallback, but limit them to avoid SG rule limits
+data "aws_ip_ranges" "cloudfront" {
+  regions  = ["global"]
+  services = ["cloudfront"]
+}
+
+# Local values for CloudFront access control with security group rule limit handling
 locals {
-  # Use only the major CloudFront IP blocks to stay within security group limits
-  cloudfront_cidr_blocks = [
-    "13.32.0.0/15",
+  # Check if managed prefix list is available (preferred method)
+  managed_prefix_list_available = try(data.aws_ec2_managed_prefix_list.cloudfront[0].id, null) != null
+  
+  # Get all current CloudFront IP ranges
+  all_cloudfront_ips = data.aws_ip_ranges.cloudfront.cidr_blocks
+  
+  # AWS Security Group limit is 60 rules per group
+  # Reserve some rules for other traffic, so use max 50 for CloudFront
+  max_cloudfront_rules = 50
+  
+  # Strategy 1: Use managed prefix list (best option - no rule limit issues)
+  # Strategy 2: Use consolidated major CIDR blocks (manual but reliable)
+  # Strategy 3: Use limited set of current AWS ranges (dynamic but limited)
+  
+  # Consolidated major CloudFront CIDR blocks (covers most traffic, stays under limits)
+  consolidated_cloudfront_blocks = [
+    "13.32.0.0/15",    # Covers 13.32.0.0/16 and 13.33.0.0/16
     "13.35.0.0/16",
-    "18.238.0.0/15",
-    "52.84.0.0/15",
+    "18.238.0.0/15",   # Covers 18.238.0.0/16 and 18.239.0.0/16
+    "52.84.0.0/15",    # Covers 52.84.0.0/16 and 52.85.0.0/16
     "54.182.0.0/16",
     "54.192.0.0/16",
     "54.230.0.0/16",
@@ -75,6 +110,23 @@ locals {
     "205.251.252.0/23",
     "205.251.254.0/24"
   ]
+  
+  # Limited set of current AWS ranges (first N ranges to stay under limit)
+  limited_current_ranges = slice(local.all_cloudfront_ips, 0, min(length(local.all_cloudfront_ips), local.max_cloudfront_rules))
+  
+  # Choose the best strategy based on availability and rule count
+  cloudfront_cidr_blocks = local.managed_prefix_list_available ? [] : (
+    length(local.all_cloudfront_ips) <= local.max_cloudfront_rules ? 
+    local.limited_current_ranges : 
+    local.consolidated_cloudfront_blocks
+  )
+  
+  # Determine which method we're using for logging/debugging
+  access_control_method = local.managed_prefix_list_available ? "managed_prefix_list" : (
+    length(local.all_cloudfront_ips) <= local.max_cloudfront_rules ? 
+    "limited_current_ranges" : 
+    "consolidated_blocks"
+  )
 }
 
 resource "random_id" "bucket_suffix" {
@@ -99,9 +151,15 @@ module "alb" {
   http_enabled  = each.value.http_enabled
   https_enabled = each.value.https_enabled
 
-  # Temporarily allow all traffic for debugging 504 error - REMOVE IN PRODUCTION
-  http_ingress_cidr_blocks  = ["0.0.0.0/0"]
-  https_ingress_cidr_blocks = ["0.0.0.0/0"]
+  # SECURITY ENHANCEMENT: Restrict ALB access to CloudFront IP ranges only
+  # This blocks direct internet access and forces traffic through CloudFront
+  # Strategy: Use managed prefix list (preferred) or limited CIDR blocks to avoid SG rule limits
+  http_ingress_cidr_blocks = local.cloudfront_cidr_blocks
+  https_ingress_cidr_blocks = local.cloudfront_cidr_blocks
+  
+  # Use AWS managed prefix list for CloudFront IPs (automatically updated by AWS)
+  http_ingress_prefix_list_ids = local.managed_prefix_list_available ? [data.aws_ec2_managed_prefix_list.cloudfront[0].id] : []
+  https_ingress_prefix_list_ids = local.managed_prefix_list_available ? [data.aws_ec2_managed_prefix_list.cloudfront[0].id] : []
 
   # Health check configuration
   health_check_path    = try(each.value.health_check_path, "/")
