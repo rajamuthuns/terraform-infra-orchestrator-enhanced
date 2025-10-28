@@ -64,6 +64,11 @@ locals {
   # CloudFront managed prefix list ID (known to exist)
   cloudfront_prefix_list_id = "pl-3b927c52"
 
+  cloudfront_iprange = [
+   "13.32.0.0/15",    # Major CloudFront range (covers 13.32.x.x and 13.33.x.x)
+    "52.84.0.0/15",    # Major CloudFront range (covers 52.84.x.x and 52.85.x.x)
+    "54.230.0.0/16"    # Major CloudFront range
+  ]
 }
 
 # Random ID for unique S3 bucket naming
@@ -91,12 +96,12 @@ module "alb" {
   https_enabled = each.value.https_enabled
 
   # Managed prefix lists still count individual entries against the 60-rule limit
-  http_ingress_cidr_blocks = []
-  https_ingress_cidr_blocks = []
+  http_ingress_cidr_blocks = [local.cloudfront_iprange]
+  https_ingress_cidr_blocks = [local.cloudfront_iprange]
   
   # Don't use managed prefix list due to rule count limitations (46 entries)
-  http_ingress_prefix_list_ids = [local.cloudfront_prefix_list_id]
-  https_ingress_prefix_list_ids = [local.cloudfront_prefix_list_id]
+  http_ingress_prefix_list_ids = []
+  https_ingress_prefix_list_ids = []
 
 
   # Health check configuration
