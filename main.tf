@@ -77,11 +77,15 @@ locals {
   ]
 }
 
+resource "random_id" "bucket_suffix" {
+  byte_length = 8
+}
 
 
 # ALB Module - Application Load Balancer with CloudFront IP restriction
 module "alb" {
-  source = "git::https://github.com/purushothamgk-ns/tf-alb.git?ref=main"
+
+  source = "git::https://github.com/purushothamgk-ns/tf-alb.git"
 
   for_each = var.alb_spec
 
@@ -106,11 +110,15 @@ module "alb" {
   # Certificate for HTTPS
   certificate_arn = try(each.value.certificate_arn, "")
 
-  # Force destroy S3 bucket for ALB logs
+  access_logs_prefix = "alb-logs/${var.environment}/${each.key}"
   alb_access_logs_s3_bucket_force_destroy = true
+  
+  # Add context for unique naming
+  namespace = "${var.project_name}-${local.timestamp}-${random_id.bucket_suffix.hex}"
+  environment = var.environment
+  name = each.value.name
 
-  # Unique S3 bucket naming to avoid conflicts
-  access_logs_prefix = "${var.project_name}-${var.environment}-${each.key}"
+
 }
 
 # EC2 Module - Elastic Compute Cloud instances
