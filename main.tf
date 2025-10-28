@@ -111,7 +111,7 @@ module "alb" {
   certificate_arn = try(each.value.certificate_arn, "")
 
   alb_access_logs_s3_bucket_force_destroy = true
- 
+  access_logs_enabled = false
 
 
 }
