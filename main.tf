@@ -108,6 +108,9 @@ module "alb" {
 
   # Force destroy S3 bucket for ALB logs
   alb_access_logs_s3_bucket_force_destroy = true
+
+  # Unique S3 bucket naming to avoid conflicts
+  access_logs_prefix = "${var.project_name}-${var.environment}-${each.key}"
 }
 
 # EC2 Module - Elastic Compute Cloud instances
