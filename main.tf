@@ -111,8 +111,12 @@ module "alb" {
   certificate_arn = try(each.value.certificate_arn, "")
 
   alb_access_logs_s3_bucket_force_destroy = true
+<<<<<<< HEAD
   target_group_name = "${each.key}-${var.environment}-tg"
  
+=======
+  access_logs_enabled = false
+>>>>>>> f3ac7dcdd65f76ccada333487be48f692735fe17
 
 
 }
