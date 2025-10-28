@@ -18,8 +18,8 @@ alb_spec = {
     name                  = "linux-alb"
     health_check_path     = "/health"
     health_check_matcher  = "200"
-    target_group_port     = 443
-    target_group_protocol = "HTTPS"
+    target_group_port     = 80
+    target_group_protocol = "HTTP"
   },
   windows-alb = {
     vpc_name              = "dev-mig-target-vpc"
@@ -29,8 +29,8 @@ alb_spec = {
     name                  = "windows-alb"
     health_check_path     = "/health"
     health_check_matcher  = "200"
-    target_group_port     = 443
-    target_group_protocol = "HTTPS"
+    target_group_port     = 80
+    target_group_protocol = "HTTP"
   }
 }
 
