@@ -120,7 +120,6 @@ module "alb" {
   access_logs_enabled = false
  
 
-
 }
 
 # EC2 Module - Elastic Compute Cloud instances
