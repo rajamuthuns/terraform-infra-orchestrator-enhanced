@@ -45,23 +45,62 @@ provider "aws" {
   }
 }
 
-# ALB Module - Application Load Balancer
+# Data source to get CloudFront IP ranges
+data "aws_ip_ranges" "cloudfront" {
+  regions  = ["global"]
+  services = ["cloudfront"]
+}
+
+# Data sources for VPC and subnets
+data "aws_vpc" "selected" {
+  for_each = var.alb_spec
+  
+  filter {
+    name   = "tag:Name"
+    values = [each.value.vpc_name]
+  }
+}
+
+data "aws_subnets" "public" {
+  for_each = var.alb_spec
+  
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.selected[each.key].id]
+  }
+  
+  filter {
+    name   = "tag:Name"
+    values = ["*public*"]
+  }
+}
+
+# ALB Module - Application Load Balancer with CloudFront IP restriction
 module "alb" {
-  source = "git::https://github.com/purushothamgk-ns/tf-alb.git"
+  source = "https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb.git?ref=main"
 
   for_each = var.alb_spec
 
-  # Required: VPC name (must match Name tag on your VPC)
-  vpc_name = each.value.vpc_name
+  # Required: VPC and subnet configuration
+  vpc_id     = data.aws_vpc.selected[each.key].id
+  subnet_ids = data.aws_subnets.public[each.key].ids
 
-  # Optional: Basic ALB settings
+  # Basic ALB settings
   http_enabled  = each.value.http_enabled
   https_enabled = each.value.https_enabled
 
-  # Optional: Certificate for HTTPS (uncomment if needed)
-  # certificate_arn = each.value.certificate_arn
+  # CloudFront IP restriction - Only allow CloudFront IPs to access ALB
+  http_ingress_cidr_blocks  = data.aws_ip_ranges.cloudfront.cidr_blocks
+  https_ingress_cidr_blocks = data.aws_ip_ranges.cloudfront.cidr_blocks
 
-  # Optional: Naming context
+  # Health check configuration
+  health_check_path    = try(each.value.health_check_path, "/")
+  health_check_matcher = try(each.value.health_check_matcher, "200")
+
+  # Certificate for HTTPS
+  certificate_arn = try(each.value.certificate_arn, "")
+
+  # Naming context
   namespace   = each.key
   environment = var.environment
   name        = each.value.name
@@ -127,7 +166,7 @@ module "ec2_instance" {
 
 # WAF - Web Application Firewall (created before CloudFront)
 module "waf" {
-  source =  "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
+  source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
 
   for_each = var.waf_spec
 

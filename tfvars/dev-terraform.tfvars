@@ -17,9 +17,6 @@ alb_spec = {
     name                 = "linux-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
-    
-    # Security: Restrict to CloudFront IPs only
-    cloudfront_only = true
   },
   windows-alb = {
     vpc_name             = "dev-mig-target-vpc"
@@ -28,9 +25,6 @@ alb_spec = {
     name                 = "windows-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
-    
-    # Security: Restrict to CloudFront IPs only
-    cloudfront_only = true
   }
 }
 
@@ -54,13 +48,6 @@ ec2_spec = {
         protocol    = "tcp"
         cidr_blocks = ["10.0.0.0/8"]
         description = "SSH access from private networks"
-      },
-      {
-        from_port   = 80
-        to_port     = 80
-        protocol    = "tcp"
-        cidr_blocks = ["10.0.0.0/8"]
-        description = "HTTP access from ALB only"
       }
     ]
 
@@ -141,13 +128,6 @@ ec2_spec = {
         protocol    = "tcp"
         cidr_blocks = ["10.0.0.0/8"]
         description = "RDP access from private networks"
-      },
-      {
-        from_port   = 80
-        to_port     = 80
-        protocol    = "tcp"
-        cidr_blocks = ["10.0.0.0/8"]
-        description = "HTTP access from ALB only"
       }
     ]
 

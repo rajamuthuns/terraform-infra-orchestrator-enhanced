@@ -12,47 +12,19 @@ environment = "staging"
 alb_spec = {
   linux-alb = {
     vpc_name             = "staging-mig-target-vpc"
-    internal             = true  # Make ALB private (internal)
     http_enabled         = true
     https_enabled        = false
     name                 = "linux-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
-    
-    # Security: Only allow CloudFront IP ranges
-    allowed_cidr_blocks = [
-      "52.84.0.0/15",      # CloudFront IP ranges
-      "54.230.0.0/16",     # CloudFront IP ranges
-      "54.239.128.0/18",   # CloudFront IP ranges
-      "52.82.128.0/23",    # CloudFront IP ranges
-      "52.82.134.0/23",    # CloudFront IP ranges
-      "54.240.128.0/18",   # CloudFront IP ranges
-      "52.124.128.0/17",   # CloudFront IP ranges
-      "54.182.0.0/16",     # CloudFront IP ranges
-      "54.192.0.0/16"      # CloudFront IP ranges
-    ]
   },
   windows-alb = {
     vpc_name             = "staging-mig-target-vpc"
-    internal             = true  # Make ALB private (internal)
     http_enabled         = true
     https_enabled        = false
     name                 = "windows-alb"
     health_check_path    = "/health"
     health_check_matcher = "200"
-    
-    # Security: Only allow CloudFront IP ranges
-    allowed_cidr_blocks = [
-      "52.84.0.0/15",      # CloudFront IP ranges
-      "54.230.0.0/16",     # CloudFront IP ranges
-      "54.239.128.0/18",   # CloudFront IP ranges
-      "52.82.128.0/23",    # CloudFront IP ranges
-      "52.82.134.0/23",    # CloudFront IP ranges
-      "54.240.128.0/18",   # CloudFront IP ranges
-      "52.124.128.0/17",   # CloudFront IP ranges
-      "54.182.0.0/16",     # CloudFront IP ranges
-      "54.192.0.0/16"      # CloudFront IP ranges
-    ]
   }
 }
 
@@ -76,13 +48,6 @@ ec2_spec = {
         protocol    = "tcp"
         cidr_blocks = ["10.0.0.0/8"]
         description = "SSH access from private networks"
-      },
-      {
-        from_port   = 80
-        to_port     = 80
-        protocol    = "tcp"
-        cidr_blocks = ["10.0.0.0/8"]
-        description = "HTTP access from ALB only"
       }
     ]
 
@@ -163,13 +128,6 @@ ec2_spec = {
         protocol    = "tcp"
         cidr_blocks = ["10.0.0.0/8"]
         description = "RDP access from private networks"
-      },
-      {
-        from_port   = 80
-        to_port     = 80
-        protocol    = "tcp"
-        cidr_blocks = ["10.0.0.0/8"]
-        description = "HTTP access from ALB only"
       }
     ]
 
