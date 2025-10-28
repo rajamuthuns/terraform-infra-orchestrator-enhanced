@@ -110,13 +110,8 @@ module "alb" {
   # Certificate for HTTPS
   certificate_arn = try(each.value.certificate_arn, "")
 
-  access_logs_prefix = "alb-logs/${var.environment}/${each.key}"
   alb_access_logs_s3_bucket_force_destroy = true
-  
-  # Add context for unique naming
-  namespace = "${var.project_name}-${random_id.bucket_suffix.hex}"
-  environment = var.environment
-  name = each.value.name
+  access_logs_enabled = false
 
 
 }
