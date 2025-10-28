@@ -134,7 +134,7 @@ module "alb" {
 
   source = "git::https://github.com/purushothamgk-ns/tf-alb.git"
 
-  for_each = var.alb_spec
+    for_each = var.alb_spec
 
   # VPC configuration - use vpc_name for automatic discovery
   vpc_name = each.value.vpc_name
@@ -144,11 +144,9 @@ module "alb" {
 
   # Basic ALB settings
   http_enabled  = each.value.http_enabled
-  https_enabled = each.value.https_enabled
-
-  # SECURITY ENHANCEMENT: Restrict ALB access to CloudFront IP ranges only
-  # This blocks direct internet access and forces traffic through CloudFront
-  # Strategy: Use managed prefix list (preferred) or limited CIDR blocks to avoid SG rule limits
+  https_enabled = each.value.https_enabled  
+ 
+  # CloudFront-only access for enhanced security
   http_ingress_cidr_blocks = local.cloudfront_cidr_blocks
   https_ingress_cidr_blocks = local.cloudfront_cidr_blocks
   
@@ -159,6 +157,10 @@ module "alb" {
   # Health check configuration
   health_check_path    = try(each.value.health_check_path, "/")
   health_check_matcher = try(each.value.health_check_matcher, "200")
+
+  # Target group configuration for HTTPS
+  target_group_port     = try(each.value.target_group_port, 443)
+  target_group_protocol = try(each.value.target_group_protocol, "HTTPS")
 
   # Certificate for HTTPS
   certificate_arn = try(each.value.certificate_arn, "")

@@ -11,20 +11,26 @@ environment = "dev"
 
 alb_spec = {
   linux-alb = {
-    vpc_name             = "dev-mig-target-vpc"
-    http_enabled         = true
-    https_enabled        = false
-    name                 = "linux-alb"
-    health_check_path    = "/health"
-    health_check_matcher = "200"
+    vpc_name              = "dev-mig-target-vpc"
+    http_enabled          = true
+    https_enabled         = true
+    certificate_arn       = "arn:aws:acm:us-east-1:221106935066:certificate/e1ace7b1-f324-4ac6-aff3-7ec67edc8622"
+    name                  = "linux-alb"
+    health_check_path     = "/health"
+    health_check_matcher  = "200"
+    target_group_port     = 443
+    target_group_protocol = "HTTPS"
   },
   windows-alb = {
-    vpc_name             = "dev-mig-target-vpc"
-    http_enabled         = true
-    https_enabled        = false
-    name                 = "windows-alb"
-    health_check_path    = "/health"
-    health_check_matcher = "200"
+    vpc_name              = "dev-mig-target-vpc"
+    http_enabled          = true
+    https_enabled         = true
+    certificate_arn       = "arn:aws:acm:us-east-1:221106935066:certificate/e1ace7b1-f324-4ac6-aff3-7ec67edc8622"
+    name                  = "windows-alb"
+    health_check_path     = "/health"
+    health_check_matcher  = "200"
+    target_group_port     = 443
+    target_group_protocol = "HTTPS"
   }
 }
 
@@ -55,6 +61,13 @@ ec2_spec = {
         protocol    = "tcp"
         cidr_blocks = ["10.0.0.0/8"]
         description = "HTTP access from ALB for health checks and traffic"
+      },
+      {
+        from_port   = 443
+        to_port     = 443
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTPS access from ALB for health checks and traffic"
       }
     ]
 
@@ -142,6 +155,13 @@ ec2_spec = {
         protocol    = "tcp"
         cidr_blocks = ["10.0.0.0/8"]
         description = "HTTP access from ALB for health checks and traffic"
+      },
+      {
+        from_port   = 443
+        to_port     = 443
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTPS access from ALB for health checks and traffic"
       }
     ]
 
