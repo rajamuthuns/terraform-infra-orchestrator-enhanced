@@ -2,7 +2,7 @@
 
 # ALB Module
 module "alb" {
-  source = "https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb.git?ref=main"
+  source = "git::https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb"
 
   for_each = var.alb_spec
 
