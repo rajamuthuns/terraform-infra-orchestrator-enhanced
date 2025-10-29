@@ -2,7 +2,7 @@
 
 # ALB Module
 module "alb" {
-  source = "git::https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb"
+  source = "https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb.git?ref=main"
 
   for_each = var.alb_spec
 
@@ -11,9 +11,11 @@ module "alb" {
 
   http_enabled  = try(each.value.http_enabled, true)
   https_enabled = try(each.value.https_enabled, false)
+  
+  # ALB Security Groups - Open (Regional WAF handles CloudFront IP enforcement)
+  http_ingress_cidr_blocks  = ["0.0.0.0/0"]  # Open, protected by Regional WAF
+  https_ingress_cidr_blocks = ["0.0.0.0/0"] # Open, protected by Regional WAF
 
-  http_ingress_cidr_blocks  = local.cloudfront_iprange
-  https_ingress_cidr_blocks = local.cloudfront_iprange
 
   health_check_path    = try(each.value.health_check_path, "/")
   health_check_matcher = try(each.value.health_check_matcher, "200")
@@ -44,6 +46,8 @@ module "waf" {
   environment = var.environment
   scope       = each.value.scope
 
+  default_action = try(each.value.default_action, "allow")
+
   enable_all_aws_managed_rules = try(each.value.enable_all_aws_managed_rules, false)
   enabled_aws_managed_rules    = try(each.value.enabled_aws_managed_rules, [])
   aws_managed_rule_overrides   = try(each.value.aws_managed_rule_overrides, {})
@@ -56,8 +60,9 @@ module "waf" {
     }
   }
 
-  associated_resource_arns = each.value.scope == "REGIONAL" ? [
-    for alb_key in try(each.value.protected_albs, []) : module.alb[alb_key].alb_arn
+  # Associate Regional WAF with ALB to enforce CloudFront IP restrictions
+  associated_resource_arns = each.value.scope == "REGIONAL" && contains(keys(each.value), "protected_albs") ? [
+    for alb_key in each.value.protected_albs : module.alb[alb_key].alb_arn
   ] : []
 
   enable_logging     = try(each.value.enable_logging, false)

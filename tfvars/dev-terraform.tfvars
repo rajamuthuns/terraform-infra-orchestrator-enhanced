@@ -21,6 +21,8 @@ alb_spec = {
     health_check_matcher  = "200"
     target_group_port     = 80
     target_group_protocol = "HTTP"
+    
+
   },
   windows-alb = {
     vpc_name              = "dev-mig-target-vpc"
@@ -33,6 +35,8 @@ alb_spec = {
     health_check_matcher  = "200"
     target_group_port     = 80
     target_group_protocol = "HTTP"
+    
+
   }
 }
 
@@ -374,6 +378,43 @@ waf_spec = {
       Purpose     = "ProductionCloudFrontProtection"
       Environment = "Development"
       Security    = "Maximum"
+    }
+  },
+
+  # Regional WAF for ALB (CloudFront IP Enforcement)
+  alb-regional-waf = {
+    scope          = "REGIONAL" # For ALB protection
+    default_action = "block"    # Block by default, allow only CloudFront IPs
+    protected_albs = ["linux-alb", "windows-alb"] # ALBs to protect
+
+    # Disable AWS managed rules for this WAF (only need CloudFront IP allow)
+    enable_all_aws_managed_rules = false
+    enabled_aws_managed_rules    = []
+
+    # CloudFront IP Allow Rule using AWS Managed IP Set
+    custom_rules = [
+      {
+        name                       = "AllowAWSManagedCloudFrontIPs"
+        priority                   = 1
+        action                     = "allow"
+        type                       = "aws_managed_ip_set"
+        aws_managed_ip_set_name    = "AWSManagedIPSets/CloudFrontOriginFacing"
+        cloudwatch_metrics_enabled = true
+        metric_name                = "AllowAWSManagedCloudFrontIPs"
+        sampled_requests_enabled   = true
+      }
+    ]
+
+    # No manual IP sets needed - using AWS managed IP set
+    ip_sets = {}
+
+    enable_logging     = true
+    log_retention_days = 90
+
+    tags = {
+      Purpose     = "ALBCloudFrontIPEnforcement"
+      Environment = "Development"
+      Security    = "CloudFrontOnly"
     }
   }
 }
