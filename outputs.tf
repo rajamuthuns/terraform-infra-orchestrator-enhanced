@@ -177,10 +177,9 @@ output "cloudwatch_log_groups" {
 output "cloudfront_security_config" {
   description = "Details about CloudFront IP access control configuration"
   value = {
-    access_control_method = "managed_prefix_list"
-    managed_prefix_list_available = true
-    managed_prefix_list_id = local.cloudfront_prefix_list_id
-    prefix_list_entries = "46 CloudFront IP ranges"
-    security_approach = "Using AWS managed prefix list for complete CloudFront coverage"
+    access_control_method = "cidr_blocks"
+    cidr_blocks_count = length(local.cloudfront_iprange)
+    cidr_blocks = local.cloudfront_iprange
+    security_approach = "Using consolidated CloudFront CIDR blocks for ALB security groups"
   }
 }

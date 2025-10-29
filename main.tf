@@ -2,7 +2,7 @@
 
 # ALB Module
 module "alb" {
-  source = var.module_sources.alb
+  source = "https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb.git?ref=main"
 
   for_each = var.alb_spec
 
@@ -36,7 +36,7 @@ module "alb" {
 
 # WAF Module
 module "waf" {
-  source = var.module_sources.waf
+  source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
 
   for_each = var.waf_spec
 
@@ -80,7 +80,7 @@ module "waf" {
 
 # EC2 Module
 module "ec2_instance" {
-  source = var.module_sources.ec2
+  source = "git::https://github.com/rajamuthuns/ec2-base-module.git?ref=main"
   for_each = var.ec2_spec
 
   name_prefix   = each.key
@@ -129,7 +129,7 @@ module "ec2_instance" {
 
 # CloudFront Module
 module "cloudfront" {
-  source = var.module_sources.cloudfront
+  source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
 
   for_each = var.cloudfront_spec
 

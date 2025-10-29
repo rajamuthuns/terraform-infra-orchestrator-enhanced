@@ -64,20 +64,3 @@ variable "waf_spec" {
   type        = any
   default     = {}
 }
-
-# Module source configurations
-variable "module_sources" {
-  description = "Source paths for all modules"
-  type = object({
-    alb        = string
-    ec2        = string
-    waf        = string
-    cloudfront = string
-  })
-  default = {
-    alb        = "https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb.git?ref=main"
-    ec2        = "git::https://github.com/rajamuthuns/ec2-base-module.git?ref=main"
-    waf        = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
-    cloudfront = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
-  }
-}
