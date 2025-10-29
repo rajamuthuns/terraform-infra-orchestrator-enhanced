@@ -45,25 +45,13 @@ provider "aws" {
   }
 }
 
-
-# Try to get AWS managed prefix list for CloudFront (preferred method)
-data "aws_ec2_managed_prefix_list" "cloudfront" {
-  count = 1
-  name  = "com.amazonaws.global.cloudfront.origin-facing"
-  
-  # Handle case where prefix list doesn't exist
-  lifecycle {
-    postcondition {
-      condition     = self.id != null || self.id == null
-      error_message = "CloudFront managed prefix list check completed"
-    }
-  }
-}
-
+# Simplified CloudFront configuration
 locals {
   # CloudFront managed prefix list ID (known to exist)
   cloudfront_prefix_list_id = "pl-3b927c52"
 
+  # Comprehensive CloudFront CIDR blocks for better coverage
+  # These ranges cover most CloudFront edge locations globally
   cloudfront_iprange = [
     "13.32.0.0/15",    # Covers 13.32.x.x and 13.33.x.x
     "13.35.0.0/16",    # Additional 13.x range
@@ -79,6 +67,8 @@ locals {
     "205.251.192.0/19" # CloudFront range
   ]
 
+  # Timestamp for unique resource naming
+  timestamp = formatdate("YYYY-MM-DD-hhmm", timestamp())
 }
 
 # Random ID for unique S3 bucket naming
@@ -87,17 +77,16 @@ resource "random_id" "bucket_suffix" {
 }
 
 
-
 # ALB Module - Application Load Balancer with CloudFront IP restriction
-module "alb" {
 
-  source = "git::https://github.com/purushothamgk-ns/tf-alb.git"
+module "alb" {
+  source = "git::https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb"
 
   for_each = var.alb_spec
 
   # VPC configuration - use vpc_name for automatic discovery
   vpc_name = each.value.vpc_name
-  
+
   # Auto-discover public subnets
   auto_discover_public_subnets = true
 
@@ -105,14 +94,14 @@ module "alb" {
   http_enabled  = each.value.http_enabled
   https_enabled = each.value.https_enabled
 
-  # Managed prefix lists still count individual entries against the 60-rule limit
-  http_ingress_cidr_blocks = local.cloudfront_iprange
-  https_ingress_cidr_blocks = local.cloudfront_iprange
-  
-  # Don't use managed prefix list due to rule count limitations (46 entries)
-  http_ingress_prefix_list_ids = []
-  https_ingress_prefix_list_ids = []
+  # SECURITY ENHANCEMENT: Restrict ALB access to CloudFront IP ranges only
 
+  http_ingress_cidr_blocks  = local.cloudfront_iprange
+  https_ingress_cidr_blocks = local.cloudfront_iprange
+
+  # Don't use prefix list due to rule count (46 entries × 2 ports = 92 rules > 60 limit)
+  http_ingress_prefix_list_ids  = []
+  https_ingress_prefix_list_ids = []
 
   # Health check configuration
   health_check_path    = try(each.value.health_check_path, "/")
@@ -127,18 +116,70 @@ module "alb" {
 
   # Proper ALB naming
   load_balancer_name = "${each.key}-${var.environment}"
-  
+
   # Unique target group naming to avoid conflicts
   target_group_name = "${each.key}-${var.environment}-tg"
-  
+
   # Temporarily disable access logs due to S3 bucket policy issues
   access_logs_enabled = false
- 
+}
+
+# WAF - Web Application Firewall (MUST be created BEFORE CloudFront)
+module "waf" {
+  source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
+
+  for_each = var.waf_spec
+
+  # Basic configuration
+  project     = var.project_name
+  environment = var.environment
+  scope       = each.value.scope # CLOUDFRONT for CloudFront, REGIONAL for ALB
+
+  # WAF rules configuration
+  enable_all_aws_managed_rules = try(each.value.enable_all_aws_managed_rules, false)
+  enabled_aws_managed_rules    = try(each.value.enabled_aws_managed_rules, [])
+  aws_managed_rule_overrides   = try(each.value.aws_managed_rule_overrides, {})
+  custom_rules                 = try(each.value.custom_rules, [])
+
+  # IP sets - Convert from tfvars format to module format
+  ip_sets = {
+    for k, v in try(each.value.ip_sets, {}) : k => {
+      ip_version = try(v.ip_address_version, "IPV4") == "IPV4" ? "IPV4" : "IPV6"
+      addresses  = v.addresses
+    }
+  }
+
+  # Resource associations - CloudFront associations handled separately
+  # Note: For CloudFront scope, associations are not handled through this parameter
+  # CloudFront-WAF integration requires updating the CloudFront distribution configuration
+  associated_resource_arns = each.value.scope == "REGIONAL" ? [
+    for alb_key in try(each.value.protected_albs, []) : module.alb[alb_key].alb_arn
+  ] : []
+
+  # Logging configuration - Log group created automatically by module
+  enable_logging     = try(each.value.enable_logging, false)
+  log_retention_days = try(each.value.log_retention_days, 30)
+
+  # Redacted fields - Convert from tfvars format to module format
+  redacted_fields = [
+    for field in try(each.value.redacted_fields, []) : {
+      type = field.single_header != null ? "single_header" : (
+        field.query_string != null ? "query_string" : "uri_path"
+      )
+      name = try(field.single_header.name, null)
+    }
+  ]
+
+  # Tags
+  tags = merge(var.common_tags, {
+    Environment = var.environment
+    Scope       = each.value.scope
+  }, try(each.value.tags, {}))
 }
 
 # EC2 Module - Elastic Compute Cloud instances
 module "ec2_instance" {
-  source   = "git::https://github.com/rajamuthuns/ec2-base-module.git?ref=main"
+  source   =  "git::https://github.com/rajamuthuns/ec2-base-module.git?ref=main"
   for_each = var.ec2_spec
 
   name_prefix   = each.key
@@ -191,66 +232,9 @@ module "ec2_instance" {
   }, try(each.value.tags, {}))
 }
 
-
-
-
-# WAF - Web Application Firewall (created before CloudFront)
-module "waf" {
-  source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
-
-  for_each = var.waf_spec
-
-  # Basic configuration
-  project     = var.project_name
-  environment = var.environment
-  scope       = each.value.scope # CLOUDFRONT for CloudFront, REGIONAL for ALB
-
-  # WAF rules configuration
-  enable_all_aws_managed_rules = try(each.value.enable_all_aws_managed_rules, false)
-  enabled_aws_managed_rules    = try(each.value.enabled_aws_managed_rules, [])
-  aws_managed_rule_overrides   = try(each.value.aws_managed_rule_overrides, {})
-  custom_rules                 = try(each.value.custom_rules, [])
-
-  # IP sets - Convert from tfvars format to module format
-  ip_sets = {
-    for k, v in try(each.value.ip_sets, {}) : k => {
-      ip_version = try(v.ip_address_version, "IPV4") == "IPV4" ? "IPV4" : "IPV6"
-      addresses  = v.addresses
-    }
-  }
-
-  # Resource associations - CloudFront associations handled separately
-  # Note: For CloudFront scope, associations are not handled through this parameter
-  # CloudFront-WAF integration requires updating the CloudFront distribution configuration
-  associated_resource_arns = each.value.scope == "REGIONAL" ? [
-    for alb_key in try(each.value.protected_albs, []) : module.alb[alb_key].alb_arn
-  ] : []
-
-  # Logging configuration - Log group created automatically by module
-  enable_logging     = try(each.value.enable_logging, false)
-  log_retention_days = try(each.value.log_retention_days, 30)
-  
-  # Redacted fields - Convert from tfvars format to module format
-  redacted_fields = [
-    for field in try(each.value.redacted_fields, []) : {
-      type = field.single_header != null ? "single_header" : (
-        field.query_string != null ? "query_string" : "uri_path"
-      )
-      name = try(field.single_header.name, null)
-    }
-  ]
-
-  # Tags
-  tags = merge(var.common_tags, {
-    Environment = var.environment
-    Scope       = each.value.scope
-  }, try(each.value.tags, {}))
-}
-
 # CloudFront Distribution - Linked to ALB origins
 module "cloudfront" {
   source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
-
   for_each = var.cloudfront_spec
 
   distribution_name     = each.value.distribution_name
