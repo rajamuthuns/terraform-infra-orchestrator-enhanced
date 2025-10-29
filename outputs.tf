@@ -59,8 +59,6 @@ output "alb_details" {
       default_target_group_arn = v.default_target_group_arn
       vpc_id                   = v.vpc_id
       subnet_ids               = v.subnet_ids
-      auto_discovered_subnets  = v.auto_discovered_subnets
-      subnet_discovery_method  = v.subnet_discovery_method
     }
   }
 }
