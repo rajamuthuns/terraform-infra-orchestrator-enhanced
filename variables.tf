@@ -64,3 +64,4 @@ variable "waf_spec" {
   type        = any
   default     = {}
 }
+

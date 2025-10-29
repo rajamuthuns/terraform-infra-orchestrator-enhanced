@@ -287,6 +287,7 @@ cloudfront_spec = {
 waf_spec = {
   cloudfront-waf = {
     scope = "CLOUDFRONT" # For CloudFront distributions
+    default_action = "allow"  # Allow by default, block with specific rules
 
     # Production-like AWS Managed Rules for staging validation
     enable_all_aws_managed_rules = false
@@ -346,6 +347,7 @@ waf_spec = {
     # Staging logging configuration
     enable_logging     = true
     log_retention_days = 90 # 3 months retention for staging
+    log_destination_configs = ["arn:aws:logs:us-east-1:137617557860:log-group:aws-waf-logs-stg"]
 
     # Privacy-compliant redacted fields
     redacted_fields = [

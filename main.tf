@@ -2,8 +2,7 @@
 
 # ALB Module
 module "alb" {
-  source = "git::https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb.git"
-
+  source =  "git::https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb.git"
   for_each = var.alb_spec
 
   vpc_id     = data.aws_vpc.selected[each.key].id
@@ -11,11 +10,16 @@ module "alb" {
 
   http_enabled  = try(each.value.http_enabled, true)
   https_enabled = try(each.value.https_enabled, false)
-  
-  # ALB Security Groups - Open (Regional WAF handles CloudFront IP enforcement)
-  http_ingress_cidr_blocks  = ["0.0.0.0/0"]  # Open, protected by Regional WAF
-  https_ingress_cidr_blocks = ["0.0.0.0/0"] # Open, protected by Regional WAF
 
+  # SECURITY STRATEGY: CloudFront Prefix List (AWS Managed)
+  # Use AWS managed CloudFront prefix list with increased security group quota
+  # This provides CloudFront-only access with AWS managed IP ranges
+  
+  # ALB Security Groups - CloudFront Prefix List (AWS Managed)
+  http_ingress_prefix_list_ids  = ["pl-3b927c52"]  # AWS CloudFront prefix list
+  https_ingress_prefix_list_ids = ["pl-3b927c52"] # AWS CloudFront prefix list
+  http_ingress_cidr_blocks      = []               # Empty when using prefix lists
+  https_ingress_cidr_blocks     = []               # Empty when using prefix lists
 
   health_check_path    = try(each.value.health_check_path, "/")
   health_check_matcher = try(each.value.health_check_matcher, "200")
@@ -60,10 +64,8 @@ module "waf" {
     }
   }
 
-  # Associate Regional WAF with ALB to enforce CloudFront IP restrictions
-  associated_resource_arns = each.value.scope == "REGIONAL" && contains(keys(each.value), "protected_albs") ? [
-    for alb_key in each.value.protected_albs : module.alb[alb_key].alb_arn
-  ] : []
+  # No ALB associations needed - using CloudFront prefix list approach
+  associated_resource_arns = []
 
   enable_logging     = try(each.value.enable_logging, false)
   log_retention_days = try(each.value.log_retention_days, 30)
