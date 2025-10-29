@@ -12,6 +12,7 @@ environment = "dev"
 alb_spec = {
   linux-alb = {
     vpc_name              = "dev-mig-target-vpc"
+    subnet_names          = ["dev-mig-public-subnet-*"]
     http_enabled          = true
     https_enabled         = true
     certificate_arn       = "arn:aws:acm:us-east-1:221106935066:certificate/e1ace7b1-f324-4ac6-aff3-7ec67edc8622"
@@ -23,6 +24,7 @@ alb_spec = {
   },
   windows-alb = {
     vpc_name              = "dev-mig-target-vpc"
+    subnet_names          = ["dev-mig-public-subnet-*"]
     http_enabled          = true
     https_enabled         = true
     certificate_arn       = "arn:aws:acm:us-east-1:221106935066:certificate/e1ace7b1-f324-4ac6-aff3-7ec67edc8622"
@@ -285,13 +287,15 @@ waf_spec = {
     # Comprehensive AWS Managed Rules for maximum protection
     enable_all_aws_managed_rules = false
     enabled_aws_managed_rules = [
-      "common_rule_set",  # Core protection
+      "common_rule_set",  # Core protection (OWASP Top 10)
       "known_bad_inputs", # Malicious input protection
       "sqli_rule_set",    # SQL injection protection
       "ip_reputation",    # Bad IP blocking
       "linux_rule_set",   # Linux-specific attacks
       "bot_control",      # Bot protection
-      "anonymous_ip"      # Anonymous IP blocking
+      "anonymous_ip",     # Anonymous IP blocking
+      "wordpress_rule_set", # WordPress protection
+      "php_rule_set"      # PHP application protection
     ]
 
     # Production-grade custom rules with layered security
@@ -312,9 +316,19 @@ waf_spec = {
         priority                   = 12
         action                     = "block"
         type                       = "geo_match"
-        country_codes              = ["CN", "RU", "KP", "IR", "SY"] # Expanded high-risk countries
+        country_codes              = ["CN", "RU", "KP", "IR", "SY", "AF", "IQ"] # Expanded high-risk countries
         cloudwatch_metrics_enabled = true
         metric_name                = "GeoBlockHighRisk"
+        sampled_requests_enabled   = true
+      },
+      {
+        name                       = "BlockMaliciousIPs"
+        priority                   = 13
+        action                     = "block"
+        type                       = "ip_set"
+        ip_set_arn                 = "blocked_malicious_ips"
+        cloudwatch_metrics_enabled = true
+        metric_name                = "BlockMaliciousIPs"
         sampled_requests_enabled   = true
       }
     ]
@@ -340,6 +354,7 @@ waf_spec = {
     # Production logging configuration
     enable_logging     = true
     log_retention_days = 180 # 6 months retention for compliance
+    log_destination_configs = ["arn:aws:logs:us-east-1:221106935066:log-group:aws-waf-logs-dev"]
 
     # Privacy-compliant redacted fields
     redacted_fields = [

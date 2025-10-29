@@ -1,147 +1,54 @@
 # Terraform Infrastructure Orchestrator - Main Configuration
-# This file orchestrates multiple base modules and is environment-agnostic
 
-terraform {
-  required_version = ">= 1.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-# Configure the AWS Provider
-provider "aws" {
-  region = var.aws_region
-
-  # Cross-account assume role for deployment
-  # Credential flow:
-  # 1. Workflow uses org master account (345918514280) credentials
-  # 2. Backend operations: workflow assumes shared services account (852998999082) role for state/locking
-  # 3. Provider operations: provider assumes target deployment account role (if different from org master)
-  dynamic "assume_role" {
-    for_each = var.account_id != null && var.account_id != "" && var.account_id != "345918514280" ? [1] : []
-    content {
-      role_arn     = "arn:aws:iam::${var.account_id}:role/OrganizationAccountAccessRole"
-      session_name = "terraform-deployment-${var.environment}"
-    }
-  }
-
-  # Ensure proper credential handling
-  skip_credentials_validation = false
-  skip_metadata_api_check     = false
-  skip_region_validation      = false
-
-  default_tags {
-    tags = {
-      Environment   = var.environment
-      Project       = var.project_name
-      ManagedBy     = "terraform"
-      Workspace     = terraform.workspace
-      OrgMaster     = "345918514280"
-      TargetAccount = var.account_id
-    }
-  }
-}
-
-# Simplified CloudFront configuration
-locals {
-  # CloudFront managed prefix list ID (known to exist)
-  cloudfront_prefix_list_id = "pl-3b927c52"
-
-  # Comprehensive CloudFront CIDR blocks for better coverage
-  # These ranges cover most CloudFront edge locations globally
-  cloudfront_iprange = [
-    "13.32.0.0/15",    # Covers 13.32.x.x and 13.33.x.x
-    "13.35.0.0/16",    # Additional 13.x range
-    "18.238.0.0/15",   # Covers 18.238.x.x and 18.239.x.x  
-    "52.84.0.0/15",    # Covers 52.84.x.x and 52.85.x.x
-    "54.182.0.0/16",   # CloudFront range
-    "54.192.0.0/16",   # CloudFront range
-    "54.230.0.0/16",   # Major CloudFront range
-    "54.239.128.0/18", # CloudFront range
-    "54.240.128.0/18", # CloudFront range
-    "99.84.0.0/16",    # CloudFront range
-    "130.176.0.0/16",  # CloudFront range
-    "205.251.192.0/19" # CloudFront range
-  ]
-
-  # Timestamp for unique resource naming
-  timestamp = formatdate("YYYY-MM-DD-hhmm", timestamp())
-}
-
-# Random ID for unique S3 bucket naming
-resource "random_id" "bucket_suffix" {
-  byte_length = 8
-}
-
-
-# ALB Module - Application Load Balancer with CloudFront IP restriction
-
+# ALB Module
 module "alb" {
-  source = "git::https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb"
+  source = var.module_sources.alb
 
   for_each = var.alb_spec
 
-  # VPC configuration - use vpc_name for automatic discovery
-  vpc_name = each.value.vpc_name
+  vpc_id     = data.aws_vpc.selected[each.key].id
+  subnet_ids = data.aws_subnets.public[each.key].ids
 
-  # Auto-discover public subnets
-  auto_discover_public_subnets = true
-
-  # Basic ALB settings
-  http_enabled  = each.value.http_enabled
-  https_enabled = each.value.https_enabled
-
-  # SECURITY ENHANCEMENT: Restrict ALB access to CloudFront IP ranges only
+  http_enabled  = try(each.value.http_enabled, true)
+  https_enabled = try(each.value.https_enabled, false)
 
   http_ingress_cidr_blocks  = local.cloudfront_iprange
   https_ingress_cidr_blocks = local.cloudfront_iprange
 
-  # Don't use prefix list due to rule count (46 entries × 2 ports = 92 rules > 60 limit)
-  http_ingress_prefix_list_ids  = []
-  https_ingress_prefix_list_ids = []
-
-  # Health check configuration
   health_check_path    = try(each.value.health_check_path, "/")
   health_check_matcher = try(each.value.health_check_matcher, "200")
 
-  # Target group configuration for HTTPS
-  target_group_port     = try(each.value.target_group_port, 443)
-  target_group_protocol = try(each.value.target_group_protocol, "HTTPS")
+  target_group_port     = try(each.value.target_group_port, 80)
+  target_group_protocol = try(each.value.target_group_protocol, "HTTP")
 
-  # Certificate for HTTPS
   certificate_arn = try(each.value.certificate_arn, "")
 
-  # Proper ALB naming
   load_balancer_name = "${each.key}-${var.environment}"
+  target_group_name  = "${each.key}-${var.environment}-tg"
 
-  # Unique target group naming to avoid conflicts
-  target_group_name = "${each.key}-${var.environment}-tg"
-
-  # Temporarily disable access logs due to S3 bucket policy issues
+  name        = each.key
+  environment = var.environment
+  
   access_logs_enabled = false
+  
+  tags = merge(var.common_tags, try(each.value.tags, {}))
 }
 
-# WAF - Web Application Firewall (MUST be created BEFORE CloudFront)
+# WAF Module
 module "waf" {
-  source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
+  source = var.module_sources.waf
 
   for_each = var.waf_spec
 
-  # Basic configuration
   project     = var.project_name
   environment = var.environment
-  scope       = each.value.scope # CLOUDFRONT for CloudFront, REGIONAL for ALB
+  scope       = each.value.scope
 
-  # WAF rules configuration
   enable_all_aws_managed_rules = try(each.value.enable_all_aws_managed_rules, false)
   enabled_aws_managed_rules    = try(each.value.enabled_aws_managed_rules, [])
   aws_managed_rule_overrides   = try(each.value.aws_managed_rule_overrides, {})
   custom_rules                 = try(each.value.custom_rules, [])
 
-  # IP sets - Convert from tfvars format to module format
   ip_sets = {
     for k, v in try(each.value.ip_sets, {}) : k => {
       ip_version = try(v.ip_address_version, "IPV4") == "IPV4" ? "IPV4" : "IPV6"
@@ -149,18 +56,13 @@ module "waf" {
     }
   }
 
-  # Resource associations - CloudFront associations handled separately
-  # Note: For CloudFront scope, associations are not handled through this parameter
-  # CloudFront-WAF integration requires updating the CloudFront distribution configuration
   associated_resource_arns = each.value.scope == "REGIONAL" ? [
     for alb_key in try(each.value.protected_albs, []) : module.alb[alb_key].alb_arn
   ] : []
 
-  # Logging configuration - Log group created automatically by module
   enable_logging     = try(each.value.enable_logging, false)
   log_retention_days = try(each.value.log_retention_days, 30)
 
-  # Redacted fields - Convert from tfvars format to module format
   redacted_fields = [
     for field in try(each.value.redacted_fields, []) : {
       type = field.single_header != null ? "single_header" : (
@@ -170,16 +72,15 @@ module "waf" {
     }
   ]
 
-  # Tags
   tags = merge(var.common_tags, {
     Environment = var.environment
     Scope       = each.value.scope
   }, try(each.value.tags, {}))
 }
 
-# EC2 Module - Elastic Compute Cloud instances
+# EC2 Module
 module "ec2_instance" {
-  source   =  "git::https://github.com/rajamuthuns/ec2-base-module.git?ref=main"
+  source = var.module_sources.ec2
   for_each = var.ec2_spec
 
   name_prefix   = each.key
@@ -190,18 +91,14 @@ module "ec2_instance" {
   key_name      = try(each.value.key_name, null)
   subnet_name   = try(each.value.subnet_name, null)
 
-  # Use AMI name (required)
   ami_name = each.value.ami_name
 
-  # OS-specific configurations
   root_volume_size       = try(each.value.root_volume_size, try(each.value.os_type, "linux") == "windows" ? 50 : 20)
   additional_ebs_volumes = try(each.value.additional_ebs_volumes, [])
 
-  # ALB Integration - Connect to ALB target groups
   enable_alb_integration = try(each.value.enable_alb_integration, false)
   alb_target_group_arns  = try(each.value.enable_alb_integration, false) ? [module.alb[each.value.alb_name].default_target_group_arn] : []
 
-  # OS-specific security group rules
   ingress_rules = try(each.value.ingress_rules, [
     {
       from_port   = try(each.value.os_type, "linux") == "windows" ? 3389 : 22
@@ -212,7 +109,6 @@ module "ec2_instance" {
     }
   ])
 
-  # OS-specific user data
   user_data = try(each.value.os_type, "linux") == "windows" ? base64encode(templatefile("${path.module}/userdata/userdata-windows.ps1", {
     environment = var.environment
     hostname    = each.key
@@ -223,7 +119,6 @@ module "ec2_instance" {
     os_type     = try(each.value.os_type, "linux")
   }))
 
-  # Use existing security group or create new one
   create_security_group = true
 
   tags = merge({
@@ -232,9 +127,10 @@ module "ec2_instance" {
   }, try(each.value.tags, {}))
 }
 
-# CloudFront Distribution - Linked to ALB origins
+# CloudFront Module
 module "cloudfront" {
-  source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
+  source = var.module_sources.cloudfront
+
   for_each = var.cloudfront_spec
 
   distribution_name     = each.value.distribution_name
@@ -242,12 +138,10 @@ module "cloudfront" {
   ping_auth_cookie_name = try(each.value.ping_auth_cookie_name, "PingAccessToken")
   ping_redirect_url     = each.value.ping_redirect_url
 
-  # CloudFront module supported parameters
   allowed_methods = try(each.value.allowed_methods, ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"])
   cached_methods  = try(each.value.cached_methods, ["GET", "HEAD"])
   price_class     = try(each.value.price_class, "PriceClass_100")
 
-  # WAF Web ACL association - reference WAF module output
   web_acl_id = try(each.value.waf_key, null) != null ? module.waf[each.value.waf_key].web_acl_arn : null
 
   tags = merge(var.common_tags, {
@@ -256,4 +150,3 @@ module "cloudfront" {
     ALBOrigin   = each.value.alb_origin
   }, try(each.value.tags, {}))
 }
-

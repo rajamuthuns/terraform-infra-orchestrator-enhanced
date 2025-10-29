@@ -12,9 +12,9 @@ environment = "stg"
 
 alb_spec = {
   linux-alb = {
-    vpc_name              = "dev-mig-target-vpc"
-    http_enabled          = true
-    https_enabled         = true
+    vpc_name      = "dev-mig-target-vpc"
+    http_enabled  = true
+    https_enabled = true
     //certificate_arn       = "arn:aws:acm:us-east-1:221106935066:certificate/e1ace7b1-f324-4ac6-aff3-7ec67edc8622"
     name                  = "linux-alb"
     health_check_path     = "/health"
@@ -23,9 +23,9 @@ alb_spec = {
     target_group_protocol = "HTTP"
   },
   windows-alb = {
-    vpc_name              = "dev-mig-target-vpc"
-    http_enabled          = true
-    https_enabled         = true
+    vpc_name      = "dev-mig-target-vpc"
+    http_enabled  = true
+    https_enabled = true
     //certificate_arn       = "arn:aws:acm:us-east-1:221106935066:certificate/e1ace7b1-f324-4ac6-aff3-7ec67edc8622"
     name                  = "windows-alb"
     health_check_path     = "/health.txt"

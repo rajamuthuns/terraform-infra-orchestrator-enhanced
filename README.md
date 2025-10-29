@@ -23,10 +23,10 @@ Configuration        Module Bridge        Registry/GitHub    Infrastructure
 ```
 
 **Base Modules Integrated:**
-- **ALB Module**: `./tf-alb-main` (Local) - Application Load Balancer with health checks
+- **ALB Module**: `git::https://github.com/rajamuthuns/tf-alb-main.git` - Application Load Balancer with health checks
 - **EC2 Module**: `git::https://github.com/rajamuthuns/ec2-base-module.git` - EC2 instances with auto-configuration
-- **WAF Module**: `./tf-waf-base-module` (Local) - Web Application Firewall with comprehensive rules
-- **CloudFront Module**: `./tf-cf-base-module` (Local) - CDN with PING authentication
+- **WAF Module**: `git::https://github.com/rajamuthuns/tf-waf-base-module.git` - Web Application Firewall with comprehensive rules
+- **CloudFront Module**: `git::https://github.com/rajamuthuns/tf-cf-base-module.git` - CDN with PING authentication
 
 ## 🔗 Module Interlinking & Configuration Bridge
 
@@ -111,9 +111,10 @@ tf-enhanced/                        # Orchestrator Root
 │   ├── dev-terraform.tfvars        # Development environment config
 │   ├── stg-terraform.tfvars        # Staging environment config
 │   └── prod-terraform.tfvars       # Production environment config
-├── tf-alb-main/                    # 📦 Local ALB base module
-├── tf-cf-base-module/              # 📦 Local CloudFront base module  
-├── tf-waf-base-module/             # 📦 Local WAF base module
+├── modules/                        # 📦 Downloaded GitHub modules (auto-managed)
+│   ├── tf-alb-main/               # ALB module from GitHub
+│   ├── tf-cf-base-module/         # CloudFront module from GitHub
+│   └── tf-waf-base-module/        # WAF module from GitHub
 ├── userdata/                       # Server initialization scripts
 ├── scripts/                        # Validation and testing scripts
 ├── shared/                         # Shared backend configuration
