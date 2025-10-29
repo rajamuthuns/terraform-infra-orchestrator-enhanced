@@ -1,15 +1,14 @@
 # GitHub Actions Setup Guide
 
-This guide walks you through setting up the Terraform Infrastructure Orchestrator with GitHub Actions for automated CI/CD deployment.
+Setup guide for automated CI/CD deployment using GitHub Actions.
 
-## Overview
+## Workflow Features
 
-The GitHub Actions workflow provides:
 - Branch-based environment deployment (dev, staging, production)
 - Terraform validation, planning, and deployment
 - Workspace isolation for each environment
 - Manual workflow dispatch with configurable options
-- Secure AWS credential management with cross-account role assumption
+- Secure AWS credential management
 - Production approval gates
 
 ## Prerequisites

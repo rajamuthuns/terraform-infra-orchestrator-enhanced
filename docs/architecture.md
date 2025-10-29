@@ -1,29 +1,29 @@
-# Terraform Infrastructure Orchestrator - Architecture Guide
+# Architecture Guide
 
-This document provides detailed technical architecture information for the **Terraform Infrastructure Orchestrator** and its multi-module integration capabilities.
+High-level architecture overview of the Terraform Infrastructure Orchestrator.
 
 ## 🎯 Orchestrator Overview
 
 The Terraform Infrastructure Orchestrator serves as a **configuration bridge** that automatically manages dependencies between multiple base modules, enabling seamless deployment across multiple AWS accounts and environments.
 
-### Core Orchestrator Principles
+### Core Principles
 - **Module Abstraction**: Hide complex module interdependencies
 - **Configuration Unification**: Single tfvars file per environment
 - **Cross-Account Consistency**: Same patterns across all AWS accounts
 - **Environment Parity**: Identical structure with environment-specific sizing
 - **Automatic Linking**: Modules reference each other through orchestrator logic
 
-## 🏗️ Multi-Module Architecture
+## 🏗️ High-Level Architecture
 
-### Orchestrator Integration Flow
+### Orchestrator Flow
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    Terraform Infrastructure Orchestrator                │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  tfvars/dev.tfvars → main.tf (Bridge) → GitHub Modules → AWS Resources  │
-│       ↑                   ↑                   ↑              ↑          │
-│  Environment        Module Bridge      Base Modules    Infrastructure    │
-│  Configuration    & Dependency Mgmt   (GitHub Sources)   Deployment     │
+│  tfvars/env.tfvars → main.tf (Bridge) → Base Modules → AWS Resources   │
+│       ↑                   ↑                ↑              ↑            │
+│  Environment        Module Bridge    GitHub Sources   Infrastructure    │
+│  Configuration    & Dependency Mgmt                    Deployment       │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,62 +43,15 @@ The Terraform Infrastructure Orchestrator serves as a **configuration bridge** t
                     └─────────────────┘
 ```
 
-## 🔗 Module Interlinking Architecture
+## 🌍 Multi-Environment Architecture
 
-### Automatic Dependency Resolution
-The orchestrator automatically resolves and manages dependencies between modules:
-
-```hcl
-# Orchestrator automatically creates these links:
-module "ec2_instance" {
-  # ALB Integration - Orchestrator handles target group ARN linking
-  alb_target_group_arns = try(each.value.enable_alb_integration, false) ? 
-    [module.alb[each.value.alb_name].default_target_group_arn] : []
-}
-
-module "cloudfront" {
-  # ALB Integration - Orchestrator handles DNS name linking
-  origin_domain_name = module.alb[each.value.alb_origin].alb_dns_name
-  
-  # WAF Integration - Orchestrator handles WAF ARN linking
-  web_acl_id = try(each.value.waf_key, null) != null ? 
-    module.waf[each.value.waf_key].web_acl_arn : null
-}
-```
-
-### Configuration Abstraction Layer
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Configuration Layer                          │
-├─────────────────────────────────────────────────────────────────┤
-│  alb_spec = { linux-alb = { ... } }                           │
-│  ec2_spec = { webserver = { alb_name = "linux-alb" } }        │
-│  cloudfront_spec = { web-cf = { alb_origin = "linux-alb" } }  │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   Orchestrator Logic                           │
-├─────────────────────────────────────────────────────────────────┤
-│  • Resolves module dependencies automatically                  │
-│  • Links outputs to inputs across modules                      │
-│  • Manages resource naming and tagging                         │
-│  • Handles environment-specific configurations                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## 🌍 Multi-Account & Multi-Environment Architecture
-
-### Cross-Account Deployment Pattern
+### Environment Pattern
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │  Dev Account    │    │ Staging Account │    │  Prod Account   │
-│  (221106935066) │    │  (137617557860) │    │  (221106935066) │
 ├─────────────────┤    ├─────────────────┤    ├─────────────────┤
 │ • t3.small      │    │ • t3.medium     │    │ • t3.large+     │
-│ • 20-100GB      │    │ • 30-300GB      │    │ • 50-500GB+     │
-│ • Basic Monitor │    │ • Enhanced Mon  │    │ • Full SOC      │
-│ • 9 WAF Rules   │    │ • 7 WAF Rules   │    │ • 10 WAF Rules  │
+│ • Basic Config  │    │ • Enhanced      │    │ • Production    │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          ▼                       ▼                       ▼
@@ -108,7 +61,7 @@ module "cloudfront" {
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
-### Workspace Management Architecture
+### Workspace Management
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Terraform Workspaces                        │
@@ -117,81 +70,55 @@ module "cloudfront" {
 │  terraform workspace select staging  → tfvars/stg-terraform.tfvars  │
 │  terraform workspace select production → tfvars/prod-terraform.tfvars │
 └─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                 State Isolation                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  • Separate state files per environment                        │
-│  • Cross-account provider configuration                        │
-│  • Environment-specific resource naming                        │
-│  • Isolated infrastructure per workspace                       │
-└─────────────────────────────────────────────────────────────────┘
 ```
 
-## 🛡️ Security Architecture Integration
+## 🛡️ Security Architecture
 
-### CloudFront Security Flow
+### Security Flow
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Security Architecture                        │
 ├─────────────────────────────────────────────────────────────────┤
-│  Browser → CloudFront → CloudFront WAF → ALB → EC2             │
-│     ↑          ↑            ↑              ↑      ↑            │
-│   User    Edge Cache   Attack Filter   Prefix    Apps          │
-│  Traffic   + SSL/TLS   (OWASP/Bot)     List     Serve          │
+│  Browser → CloudFront → WAF → ALB → EC2                        │
+│     ↑          ↑        ↑      ↑      ↑                        │
+│   User    Edge Cache  Filter  LB    Apps                       │
+│  Traffic   + SSL/TLS  Security      Serve                      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Security Group Quota Architecture
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                Security Group Quota Management                  │
-├─────────────────────────────────────────────────────────────────┤
-│  Default Quota: 60 rules per security group                    │
-│  Required Quota: 500 rules per security group                  │
-│  CloudFront Prefix List: ~300 IP ranges (pl-3b927c52)         │
-│  Buffer: 200 rules for future CloudFront expansion             │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## 🔧 Module Configuration Architecture
+## 🔧 Module Configuration
 
 ### Base Module Sources
 ```hcl
-# ALB Module - Load Balancer with Health Checks
+# ALB Module
 module "alb" {
   source = "git::https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb.git?ref=main"
-  # Orchestrator manages: VPC discovery, subnet selection, security groups
 }
 
-# EC2 Module - Instances with Auto-Configuration  
+# EC2 Module
 module "ec2_instance" {
   source = "git::https://github.com/rajamuthuns/ec2-base-module.git?ref=main"
-  # Orchestrator manages: ALB integration, target group linking, userdata
 }
 
-# WAF Module - Web Application Firewall
+# WAF Module
 module "waf" {
   source = "git::https://github.com/rajamuthuns/tf-waf-base-module.git?ref=main"
-  # Orchestrator manages: CloudFront association, rule configuration
 }
 
-# CloudFront Module - CDN with WAF Protection
+# CloudFront Module
 module "cloudfront" {
   source = "git::https://github.com/rajamuthuns/tf-cf-base-module.git?ref=main"
-  # Orchestrator manages: ALB origin linking, WAF association
 }
 ```
 
-### Configuration Inheritance Pattern
+### Configuration Pattern
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                Environment Configuration Inheritance             │
+│                Environment Configuration                        │
 ├─────────────────────────────────────────────────────────────────┤
 │  Base Configuration (All Environments)                         │
 │  ├── Module sources and versions                               │
-│  ├── Security group patterns                                   │
+│  ├── Security patterns                                         │
 │  ├── Naming conventions                                        │
 │  └── Tagging standards                                         │
 │                                                                │
@@ -202,53 +129,28 @@ module "cloudfront" {
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## 🔄 Data Flow Architecture
+## 🔄 Data Flow
 
-### Request Flow Through Orchestrated Infrastructure
+### Request Flow
 ```
 1. User Request → CloudFront Edge Location
-2. CloudFront → CloudFront WAF (Attack Protection)
-3. CloudFront → ALB (via AWS managed prefix list)
+2. CloudFront → WAF (Attack Protection)
+3. CloudFront → ALB (via managed prefix list)
 4. ALB → Health Check Validation
-5. ALB → Target EC2 Instance (Private Subnet)
-6. EC2 → Process Request (Apache/IIS)
-7. EC2 → Return Response via ALB
-8. ALB → CloudFront → User
+5. ALB → Target EC2 Instance
+6. EC2 → Process Request
+7. Response → ALB → CloudFront → User
 ```
 
-### Module Communication Flow
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   CloudFront    │    │      ALB        │    │      EC2        │
-│                 │    │                 │    │                 │
-│ • Domain Name   │───►│ • DNS Name      │───►│ • Target Group  │
-│ • WAF ARN       │    │ • Target Group  │    │ • Health Check  │
-│ • SSL Cert      │    │ • Health Check  │    │ • Auto Scaling  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         ▲                       ▲                       ▲
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-                    ┌─────────────────┐
-                    │      WAF        │
-                    │                 │
-                    │ • Web ACL ARN   │
-                    │ • Rule Sets     │
-                    │ • IP Sets       │
-                    └─────────────────┘
-```
+## 📊 Monitoring
 
-## 📊 Monitoring & Observability Architecture
-
-### Built-in Orchestrator Monitoring
+### Health Checks
 ```hcl
-# Automatic health endpoints on all instances
 health_endpoints = {
-  linux   = "/health"      # Apache health check
-  windows = "/health.txt"  # IIS health check
+  linux   = "/health"
+  windows = "/health.txt"
 }
 
-# ALB health check configuration
 health_check = {
   path     = "/health"
   matcher  = "200"
@@ -257,90 +159,38 @@ health_check = {
 }
 ```
 
-### Multi-Environment Monitoring Matrix
-| Environment | Monitoring Level | Health Checks | Logging | Alerting |
-|-------------|------------------|---------------|---------|----------|
-| Development | Basic | ALB Health | Local Logs | Manual |
-| Staging | Enhanced | ALB + Custom | CloudWatch | Basic |
-| Production | Full SOC | Comprehensive | Full Logging | Advanced |
+## 🚀 Deployment Flow
 
-## 🚀 Deployment Architecture
-
-### Orchestrator Deployment Flow
+### Deployment Steps
 ```
-1. Environment Selection
-   └── terraform workspace select {env}
-
-2. Configuration Loading  
-   └── terraform apply -var-file=tfvars/{env}-terraform.tfvars
-
-3. Module Resolution
-   └── Download and cache GitHub modules
-
-4. Dependency Planning
-   └── Calculate inter-module dependencies
-
-5. Resource Creation
-   └── Deploy modules in dependency order
-
-6. Validation
-   └── ./scripts/test_cloudfront_security.sh
+1. Environment Selection → terraform workspace select {env}
+2. Configuration Loading → terraform apply -var-file=tfvars/{env}.tfvars
+3. Module Resolution → Download GitHub modules
+4. Dependency Planning → Calculate dependencies
+5. Resource Creation → Deploy in order
+6. Validation → Test deployment
 ```
 
-### GitOps Integration Architecture
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    GitOps Workflow                             │
-├─────────────────────────────────────────────────────────────────┤
-│  Feature Branch → Dev Environment → Validation                 │
-│  Staging Branch → Staging Environment → Integration Testing    │
-│  Main Branch → Production Environment → Production Deployment  │
-└─────────────────────────────────────────────────────────────────┘
-```
+## 🎯 Benefits
 
-## 🔧 Orchestrator Benefits Architecture
+### Before vs After Orchestrator
 
-### Configuration Complexity Reduction
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Before Orchestrator                         │
-├─────────────────────────────────────────────────────────────────┤
-│  • 4 separate module configurations per environment            │
-│  • Manual dependency management                                │
-│  • Complex output/input linking                                │
-│  • Inconsistent naming across environments                     │
-│  • Environment-specific module versions                        │
-│  • Manual cross-account configuration                          │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    After Orchestrator                          │
-├─────────────────────────────────────────────────────────────────┤
-│  • Single tfvars file per environment                          │
-│  • Automatic dependency resolution                             │
-│  • Transparent module linking                                  │
-│  • Consistent patterns across all accounts                     │
-│  • Unified module version management                           │
-│  • Seamless cross-account deployment                           │
-└─────────────────────────────────────────────────────────────────┘
-```
+**Before:**
+- Multiple module configurations per environment
+- Manual dependency management
+- Complex output/input linking
+- Inconsistent naming
 
-## 🎯 Orchestrator Success Metrics
+**After:**
+- Single tfvars file per environment
+- Automatic dependency resolution
+- Transparent module linking
+- Consistent patterns
 
-### Infrastructure Consistency
-- ✅ **4 Base Modules** integrated and interlinked
-- ✅ **3 Environments** (dev/staging/prod) with consistent patterns
-- ✅ **Multiple AWS Accounts** supported seamlessly
-- ✅ **Automatic Dependency Management** between all modules
-- ✅ **Unified Configuration** through environment-specific tfvars
-- ✅ **Version Consistency** across all environments and accounts
-
-### Operational Efficiency
-- ✅ **Configuration Reduction**: 75% fewer configuration files
-- ✅ **Deployment Time**: Consistent deployment patterns
-- ✅ **Error Reduction**: Automatic dependency resolution
-- ✅ **Environment Parity**: Identical patterns across accounts
-- ✅ **Scaling Simplicity**: Add resources with minimal configuration
-
-This orchestrator architecture provides a robust foundation for managing complex, multi-module infrastructure deployments across multiple AWS accounts and environments with maximum consistency and minimal operational overhead.
+### Success Metrics
+- ✅ **4 Base Modules** integrated
+- ✅ **3 Environments** with consistent patterns
+- ✅ **Multiple AWS Accounts** supported
+- ✅ **Automatic Dependency Management**
+- ✅ **Unified Configuration**
+- ✅ **75% Configuration Reduction**

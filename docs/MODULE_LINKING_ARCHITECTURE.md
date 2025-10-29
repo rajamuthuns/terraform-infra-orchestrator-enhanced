@@ -1,9 +1,8 @@
 # Module Linking Architecture
 
-## Overview
-This document describes the complete architecture flow: **EC2 → ALB → CloudFront → WAF**
+Detailed guide on how modules interconnect and reference each other in the orchestrator.
 
-## Architecture Flow
+## Module Dependency Flow
 
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
@@ -12,172 +11,413 @@ This document describes the complete architecture flow: **EC2 → ALB → CloudF
 └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
 ```
 
-## Module Specifications
+## How Module Linking Works
 
-### 1. EC2 Module
-- **Purpose**: Application servers (Linux and Windows)
-- **Integration**: Connected to ALB target groups via `alb_target_group_arns`
-- **Configuration**: 
-  - `enable_alb_integration = true`
-  - `alb_name` references the ALB module key
+### 1. Reference Variables
+Modules reference each other using key names from tfvars specifications:
 
-### 2. ALB Module
-- **Purpose**: Load balancing between EC2 instances
-- **Integration**: Provides `alb_dns_name` as origin for CloudFront
-- **Configuration**: Two ALBs (linux-alb, windows-alb) for different application stacks
-
-### 3. CloudFront Module
-- **Purpose**: Global content delivery and caching
-- **Integration**: 
-  - `origin_domain_name` = `module.alb[each.value.alb_origin].alb_dns_name`
-  - Protected by WAF via `distribution_arn`
-- **Configuration**: Separate distributions for Linux and Windows applications
-
-### 4. WAF Module
-- **Purpose**: Web application firewall protection
-- **Integration**: 
-  - `associated_resource_arns` = CloudFront distribution ARNs
-  - `scope = "CLOUDFRONT"` for CloudFront protection
-- **Configuration**: Single WAF protecting both CloudFront distributions
-
-## Configuration Structure
-
-### CloudFront Specification
 ```hcl
+# EC2 references ALB by name
+ec2_spec = {
+  "web-server" = {
+    enable_alb_integration = true
+    alb_name = "linux-alb"        # References alb_spec key
+  }
+}
+
+# CloudFront references ALB by name
 cloudfront_spec = {
-  linux-cf = {
-    distribution_name      = "linux-app-distribution"
-    alb_origin            = "linux-alb"  # References ALB module key
-    price_class           = "PriceClass_100"
-    viewer_protocol_policy = "redirect-to-https"
-    origin_protocol_policy = "http-only"
-    # ... additional configurations
+  "web-cf" = {
+    alb_origin = "linux-alb"      # References alb_spec key
   }
 }
 ```
 
-### WAF Specification
+### 2. Automatic Resolution
+The orchestrator automatically resolves these references:
+
 ```hcl
+# In main.tf - EC2 Module
+module "ec2_instance" {
+  # Orchestrator resolves alb_name to actual target group ARN
+  alb_target_group_arns = try(each.value.enable_alb_integration, false) ? 
+    [module.alb[each.value.alb_name].default_target_group_arn] : []
+}
+
+# In main.tf - CloudFront Module  
+module "cloudfront" {
+  # Orchestrator resolves alb_origin to actual DNS name
+  origin_domain_name = module.alb[each.value.alb_origin].alb_dns_name
+}
+```
+
+### 3. Module Integration Points
+
+#### EC2 → ALB Integration
+- **Purpose**: Application servers connect to load balancer
+- **Integration**: `alb_target_group_arns` from ALB module output
+- **Configuration**: `enable_alb_integration = true` + `alb_name`
+
+#### ALB → CloudFront Integration  
+- **Purpose**: Load balancer serves as CloudFront origin
+- **Integration**: `alb_dns_name` from ALB module output
+- **Configuration**: `alb_origin` references ALB module key
+
+#### CloudFront → WAF Integration
+- **Purpose**: WAF protects CloudFront distributions
+- **Integration**: `distribution_arn` from CloudFront module output
+- **Configuration**: `waf_key` references WAF module key
+
+#### WAF → CloudFront Integration
+- **Purpose**: WAF associates with CloudFront distributions
+- **Integration**: `associated_resource_arns` from CloudFront ARNs
+- **Configuration**: `protected_distributions` list of CloudFront keys
+
+## Complete Configuration Example
+
+### Step 1: Define Base Resources
+```hcl
+# ALB Configuration
+alb_spec = {
+  "linux-alb" = {
+    name = "linux-alb"
+    vpc_name = "dev-vpc"
+    http_enabled = true
+    https_enabled = false
+  }
+}
+
+# WAF Configuration
 waf_spec = {
-  cloudfront-waf = {
+  "cloudfront-waf" = {
     scope = "CLOUDFRONT"
-    protected_distributions = ["linux-cf", "windows-cf"]  # References CloudFront keys
     enabled_aws_managed_rules = [
-      "AWSManagedRulesCommonRuleSet",
-      "AWSManagedRulesKnownBadInputsRuleSet",
-      # ... additional rules
+      "common_rule_set",
+      "sqli_rule_set",
+      "bot_control"
     ]
-    # ... additional configurations
   }
 }
 ```
 
-## Environment-Specific Configurations
+### Step 2: Reference Base Resources
+```hcl
+# EC2 references ALB
+ec2_spec = {
+  "web-server" = {
+    enable_alb_integration = true
+    alb_name = "linux-alb"          # References alb_spec["linux-alb"]
+    instance_type = "t3.micro"
+    vpc_name = "dev-vpc"
+  }
+}
 
-### Development
-- **CloudFront**: Basic caching, HTTP allowed
-- **WAF**: Basic protection, rate limiting (2000 req/5min)
-- **Logging**: Basic WAF logging enabled
-
-### Staging
-- **CloudFront**: Enhanced caching, HTTPS redirect
-- **WAF**: Enhanced protection, geo-blocking, stricter rate limiting (1000 req/5min)
-- **Logging**: Comprehensive logging
-
-### Production
-- **CloudFront**: Global distribution, HTTPS only
-- **WAF**: Maximum protection, bot control, size restrictions, strict rate limiting (500 req/5min)
-- **Logging**: Full logging with field redaction
-
-## Resource Dependencies
-
-```
-EC2 Instances
-    ↓ (depends on ALB target groups)
-ALB Load Balancers
-    ↓ (provides DNS name as origin)
-CloudFront Distributions
-    ↓ (provides ARN for protection)
-WAF Web ACLs
+# CloudFront references ALB and WAF
+cloudfront_spec = {
+  "web-cf" = {
+    distribution_name = "web-app-distribution"
+    alb_origin = "linux-alb"        # References alb_spec["linux-alb"]
+    waf_key = "cloudfront-waf"      # References waf_spec["cloudfront-waf"]
+    price_class = "PriceClass_100"
+  }
+}
 ```
 
-## Key Reference Values
+## Advanced Linking Patterns
+
+### Multi-Environment References
+```hcl
+# Development - Single server
+ec2_spec = {
+  "web-server" = {
+    alb_name = "linux-alb"
+    instance_type = "t3.micro"
+  }
+}
+
+# Production - Multiple servers
+ec2_spec = {
+  "web-server-1" = {
+    alb_name = "linux-alb"          # Same ALB
+    instance_type = "t3.medium"
+  },
+  "web-server-2" = {
+    alb_name = "linux-alb"          # Same ALB
+    instance_type = "t3.medium"
+  }
+}
+```
+
+### Cross-Module Dependencies
+```hcl
+# WAF protects multiple CloudFront distributions
+waf_spec = {
+  "multi-cf-waf" = {
+    scope = "CLOUDFRONT"
+    protected_distributions = ["linux-cf", "windows-cf"]  # Multiple references
+  }
+}
+
+# Multiple CloudFront distributions using same ALB
+cloudfront_spec = {
+  "linux-cf" = {
+    alb_origin = "linux-alb"
+    waf_key = "multi-cf-waf"
+  },
+  "windows-cf" = {
+    alb_origin = "windows-alb"
+    waf_key = "multi-cf-waf"        # Same WAF
+  }
+}
+```
+
+## Dependency Resolution Order
+
+```
+1. ALB and WAF (Independent)
+    ↓
+2. EC2 Instances (depends on ALB target groups)
+    ↓
+3. CloudFront (depends on ALB DNS name)
+    ↓
+4. WAF Association (depends on CloudFront ARNs)
+```
+
+### Terraform Dependency Graph
+```hcl
+# Terraform automatically handles these dependencies:
+module.alb["linux-alb"] → module.ec2_instance["web-server"]
+module.alb["linux-alb"] → module.cloudfront["web-cf"]
+module.waf["cloudfront-waf"] → module.cloudfront["web-cf"]
+module.cloudfront["web-cf"] → module.waf["cloudfront-waf"] (association)
+```
+
+## Reference Resolution Examples
 
 ### EC2 → ALB Integration
 ```hcl
-# In EC2 specification
-enable_alb_integration = true
-alb_name = "linux-alb"  # References alb_spec key
+# Configuration
+ec2_spec = {
+  "web-server" = {
+    enable_alb_integration = true
+    alb_name = "linux-alb"          # Key reference
+  }
+}
 
-# Terraform resolves to:
-alb_target_group_arns = [module.alb["linux-alb"].default_target_group_arn]
+# Orchestrator Resolution
+module "ec2_instance" {
+  alb_target_group_arns = try(each.value.enable_alb_integration, false) ? 
+    [module.alb[each.value.alb_name].default_target_group_arn] : []
+    # Resolves to: module.alb["linux-alb"].default_target_group_arn
+}
 ```
 
 ### ALB → CloudFront Integration
 ```hcl
-# In CloudFront specification
-alb_origin = "linux-alb"  # References alb_spec key
-
-# Terraform resolves to:
-origin_domain_name = module.alb["linux-alb"].alb_dns_name
-```
-
-### CloudFront → WAF Integration
-```hcl
-# In WAF specification
-protected_distributions = ["linux-cf", "windows-cf"]  # References cloudfront_spec keys
-
-# Terraform resolves to:
-associated_resource_arns = [
-  module.cloudfront["linux-cf"].distribution_arn,
-  module.cloudfront["windows-cf"].distribution_arn
-]
-```
-
-## Deployment Order
-
-1. **EC2 and ALB**: Can be deployed in parallel
-2. **CloudFront**: Deployed after ALB (needs ALB DNS name)
-3. **WAF**: Deployed after CloudFront (needs distribution ARNs)
-
-## Outputs
-
-The configuration provides comprehensive outputs showing the complete architecture flow:
-
-```hcl
-output "architecture_flow" {
-  value = {
-    ec2_instances = { /* EC2 details with ALB integration */ }
-    alb_load_balancers = { /* ALB details */ }
-    cloudfront_distributions = { /* CloudFront details with ALB origins */ }
-    waf_web_acls = { /* WAF details with protected resources */ }
+# Configuration
+cloudfront_spec = {
+  "web-cf" = {
+    alb_origin = "linux-alb"        # Key reference
   }
+}
+
+# Orchestrator Resolution
+module "cloudfront" {
+  origin_domain_name = module.alb[each.value.alb_origin].alb_dns_name
+  # Resolves to: module.alb["linux-alb"].alb_dns_name
 }
 ```
 
-## Best Practices
+### WAF → CloudFront Integration
+```hcl
+# Configuration
+waf_spec = {
+  "cloudfront-waf" = {
+    protected_distributions = ["linux-cf", "windows-cf"]  # Key references
+  }
+}
 
-1. **Naming Convention**: Use consistent naming across modules (e.g., linux-*, windows-*)
-2. **Environment Isolation**: Use separate configurations per environment
-3. **Security**: Progressively stricter security from dev to prod
-4. **Monitoring**: Enable logging and metrics at each layer
-5. **Tags**: Consistent tagging for resource management and cost allocation
+# Orchestrator Resolution
+module "waf" {
+  associated_resource_arns = [
+    for dist in each.value.protected_distributions :
+    module.cloudfront[dist].distribution_arn
+  ]
+  # Resolves to: [
+  #   module.cloudfront["linux-cf"].distribution_arn,
+  #   module.cloudfront["windows-cf"].distribution_arn
+  # ]
+}
+```
 
-## Troubleshooting
+## Deployment Considerations
 
-### Common Issues
-1. **ALB DNS not found**: Ensure ALB module key matches `alb_origin` in CloudFront spec
-2. **CloudFront ARN not found**: Ensure CloudFront module key matches `protected_distributions` in WAF spec
-3. **Circular dependencies**: Follow the deployment order (EC2/ALB → CloudFront → WAF)
+### Parallel Deployment
+```hcl
+# These can deploy simultaneously:
+- module.alb (independent)
+- module.waf (independent, creates WAF rules)
 
-### Validation Commands
+# These depend on ALB:
+- module.ec2_instance (needs target group ARN)
+- module.cloudfront (needs ALB DNS name)
+
+# This depends on CloudFront:
+- WAF association (needs distribution ARN)
+```
+
+### Terraform Apply Order
+Terraform automatically determines the correct order based on dependencies:
+1. ALB and WAF resources created first
+2. EC2 instances and CloudFront distributions created next
+3. WAF associations created last
+
+## Validation and Outputs
+
+### Checking Module Links
 ```bash
-# Check ALB DNS names
+# Verify ALB endpoints
 terraform output alb_endpoints
 
-# Check CloudFront distributions
+# Verify CloudFront distributions
 terraform output cloudfront_endpoints
 
 # Check complete architecture flow
 terraform output architecture_flow
+```
+
+### Output Structure
+```hcl
+output "architecture_flow" {
+  value = {
+    ec2_instances = {
+      for k, v in module.ec2_instance : k => {
+        instance_id = v.instance_id
+        alb_integration = v.alb_target_group_arns
+      }
+    }
+    alb_load_balancers = {
+      for k, v in module.alb : k => {
+        dns_name = v.alb_dns_name
+        target_group_arn = v.default_target_group_arn
+      }
+    }
+    cloudfront_distributions = {
+      for k, v in module.cloudfront : k => {
+        domain_name = v.distribution_domain_name
+        origin_alb = v.origin_domain_name
+      }
+    }
+  }
+}
+```
+
+## Best Practices for Module Linking
+
+### Naming Conventions
+```hcl
+# Use descriptive, consistent names
+alb_spec = {
+  "web-alb" = { ... }      # Not "alb1"
+  "api-alb" = { ... }      # Not "alb2"
+}
+
+ec2_spec = {
+  "web-server-1" = { alb_name = "web-alb" }
+  "api-server-1" = { alb_name = "api-alb" }
+}
+```
+
+### Reference Validation
+```hcl
+# Always validate references exist
+ec2_spec = {
+  "web-server" = {
+    alb_name = "web-alb"    # Ensure this key exists in alb_spec
+  }
+}
+```
+
+### Environment Consistency
+```hcl
+# Keep same reference structure across environments
+# dev-terraform.tfvars
+ec2_spec = {
+  "web-server" = { alb_name = "web-alb" }
+}
+
+# prod-terraform.tfvars  
+ec2_spec = {
+  "web-server-1" = { alb_name = "web-alb" }  # Same reference pattern
+  "web-server-2" = { alb_name = "web-alb" }
+}
+```
+
+## Troubleshooting Module Links
+
+### Common Reference Errors
+
+#### 1. Key Not Found
+```
+Error: Invalid index
+│ The given key does not correspond to an element in this collection.
+```
+**Solution**: Verify the reference key exists in the target specification
+```hcl
+# Check that "web-alb" exists in alb_spec
+ec2_spec = {
+  "web-server" = {
+    alb_name = "web-alb"  # Must match alb_spec key
+  }
+}
+```
+
+#### 2. Circular Dependencies
+```
+Error: Cycle: module.cloudfront, module.waf
+```
+**Solution**: Check for circular references in configurations
+
+#### 3. Missing Integration Flag
+```
+Error: ALB target group ARN is empty
+```
+**Solution**: Enable integration flag
+```hcl
+ec2_spec = {
+  "web-server" = {
+    enable_alb_integration = true  # Required for ALB linking
+    alb_name = "web-alb"
+  }
+}
+```
+
+### Debugging Commands
+```bash
+# Check module state
+terraform state list | grep module
+
+# Verify specific module outputs
+terraform state show 'module.alb["web-alb"]'
+
+# Check dependency graph
+terraform graph | dot -Tpng > graph.png
+```
+
+### Validation Checklist
+```bash
+# 1. Validate configuration syntax
+terraform validate
+
+# 2. Check planned dependencies
+terraform plan -var-file=tfvars/dev-terraform.tfvars
+
+# 3. Verify module outputs after apply
+terraform output alb_endpoints
+terraform output cloudfront_endpoints
+terraform output architecture_flow
+
+# 4. Test actual connectivity
+curl -I $(terraform output -raw linux_alb_endpoint)
+curl -I $(terraform output -raw linux_cloudfront_endpoint)
 ```
