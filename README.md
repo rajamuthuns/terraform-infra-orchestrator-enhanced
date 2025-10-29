@@ -23,10 +23,10 @@ Configuration        Module Bridge        Registry/GitHub    Infrastructure
 ```
 
 **Base Modules Integrated:**
-- **ALB Module**: `git::https://github.com/rajamuthuns/tf-alb-main.git` - Application Load Balancer with health checks
-- **EC2 Module**: `git::https://github.com/rajamuthuns/ec2-base-module.git` - EC2 instances with auto-configuration
-- **WAF Module**: `git::https://github.com/rajamuthuns/tf-waf-base-module.git` - Web Application Firewall with comprehensive rules
-- **CloudFront Module**: `git::https://github.com/rajamuthuns/tf-cf-base-module.git` - CDN with PING authentication
+- **ALB Module**: `git::https://github.com/YOUR_ORG_NAME/tf-alb-main.git` - Application Load Balancer with health checks
+- **EC2 Module**: `git::https://github.com/YOUR_ORG_NAME/ec2-base-module.git` - EC2 instances with auto-configuration
+- **WAF Module**: `git::https://github.com/YOUR_ORG_NAME/tf-waf-base-module.git` - Web Application Firewall with comprehensive rules
+- **CloudFront Module**: `git::https://github.com/YOUR_ORG_NAME/tf-cf-base-module.git` - CDN with PING authentication
 
 ## 🔗 Module Interlinking & Configuration Bridge
 
@@ -221,11 +221,13 @@ terraform output architecture_flow
 ## 📚 Documentation
 
 For detailed technical information, see:
-- **[Architecture Guide](docs/ARCHITECTURE.md)** - Detailed technical architecture and component details
-- **[Module Linking Architecture](docs/MODULE_LINKING_ARCHITECTURE.md)** - How modules interconnect
-- **[GitHub Actions Setup](docs/GITHUB_ACTIONS_SETUP.md)** - CI/CD pipeline configuration
-- **[Troubleshooting Guide](docs/TROUBLESHOOTING.md)** - Common issues and solutions
-- **[Shared Services Backend Setup](docs/SHARED_SERVICES_BACKEND_SETUP.md)** - Backend configuration
+- **[Architecture Guide](docs/architecture.md)** - Detailed technical architecture and component details
+- **[Module Linking Architecture](docs/module_linking_architecture.md)** - How modules interconnect and dependency management
+- **[GitHub Actions Setup](docs/github_actions_setup.md)** - CI/CD pipeline configuration and GitOps workflow
+- **[Infrastructure Setup](docs/infra_setup.md)** - Initial infrastructure setup and prerequisites
+- **[Shared Services Backend Setup](docs/shared_services_backend_setup.md)** - Backend configuration and state management
+- **[Troubleshooting Guide](docs/troubleshooting.md)** - Common issues, solutions, and diagnostic commands
+- **[GitFlow Diagram](docs/GitFlow.jpg)** - Visual representation of the GitOps workflow
 
 ## 🎯 Current Orchestrated Infrastructure
 
