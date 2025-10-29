@@ -3,23 +3,6 @@
 
 # Project configuration
 project_name = "terraform-infra-orchestrator"
-gitlab_host  = "gitlab.aws.dev"
-gitlab_org   = "sunrajam"
-
-# Base modules configuration
-base_modules = {
-  ec2 = {
-    repository = "ec2-base-module"
-    version    = "main"
-  }
-  alb = {
-    repository = "tf-alb"
-    version    = "main"
-  }
-}
-
-# Primary module for this deployment
-primary_module = "ec2"
 
 # AWS configuration
 account_id  = "221106935066"
@@ -28,20 +11,32 @@ environment = "dev"
 
 alb_spec = {
   linux-alb = {
-    vpc_name             = "dev-mig-target-vpc"
-    http_enabled         = true
-    https_enabled        = false
-    name                 = "linux-alb"
-    health_check_path    = "/health"
-    health_check_matcher = "200"
+    vpc_name              = "dev-mig-target-vpc"
+    subnet_names          = ["dev-mig-public-subnet-*"]
+    http_enabled          = true
+    https_enabled         = true
+    certificate_arn       = "arn:aws:acm:us-east-1:221106935066:certificate/e1ace7b1-f324-4ac6-aff3-7ec67edc8622"
+    name                  = "linux-alb"
+    health_check_path     = "/health"
+    health_check_matcher  = "200"
+    target_group_port     = 80
+    target_group_protocol = "HTTP"
+    
+
   },
   windows-alb = {
-    vpc_name             = "dev-mig-target-vpc"
-    http_enabled         = true
-    https_enabled        = false
-    name                 = "windows-alb"
-    health_check_path    = "/health"
-    health_check_matcher = "200"
+    vpc_name              = "dev-mig-target-vpc"
+    subnet_names          = ["dev-mig-public-subnet-*"]
+    http_enabled          = true
+    https_enabled         = true
+    certificate_arn       = "arn:aws:acm:us-east-1:221106935066:certificate/e1ace7b1-f324-4ac6-aff3-7ec67edc8622"
+    name                  = "windows-alb"
+    health_check_path     = "/health.txt"
+    health_check_matcher  = "200"
+    target_group_port     = 80
+    target_group_protocol = "HTTP"
+    
+
   }
 }
 
@@ -57,7 +52,7 @@ ec2_spec = {
     ami_name               = "amzn2-ami-hvm-*-x86_64-gp2"
     root_volume_size       = 20
 
-    # Linux-specific security group rules
+    # Linux-specific security group rules - Secure configuration
     ingress_rules = [
       {
         from_port   = 22
@@ -70,15 +65,15 @@ ec2_spec = {
         from_port   = 80
         to_port     = 80
         protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTP access"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTP access from ALB for health checks and traffic"
       },
       {
         from_port   = 443
         to_port     = 443
         protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTPS access"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTPS access from ALB for health checks and traffic"
       }
     ]
 
@@ -151,7 +146,7 @@ ec2_spec = {
 
     root_volume_size = 50 # Windows needs more space
 
-    # Windows-specific security group rules
+    # Windows-specific security group rules - Secure configuration
     ingress_rules = [
       {
         from_port   = 3389
@@ -164,15 +159,15 @@ ec2_spec = {
         from_port   = 80
         to_port     = 80
         protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTP access"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTP access from ALB for health checks and traffic"
       },
       {
         from_port   = 443
         to_port     = 443
         protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
-        description = "HTTPS access"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTPS access from ALB for health checks and traffic"
       }
     ]
 
@@ -244,6 +239,145 @@ ec2_spec = {
     tags = {
       Application = "AppServer"
       OS          = "Windows2019"
+    }
+  }
+}
+
+# CloudFront Distribution Specifications
+cloudfront_spec = {
+  linux-cf = {
+    distribution_name     = "linux-app-distribution"
+    alb_origin            = "linux-alb"      # References the ALB module key
+    waf_key               = "cloudfront-waf" # References the WAF module key
+    price_class           = "PriceClass_100"
+    ping_auth_cookie_name = "PingAuthCookie"
+    ping_redirect_url     = "https://auth.dev.example.com/login"
+
+    # Supported CloudFront module parameters
+    allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods  = ["GET", "HEAD"]
+
+    tags = {
+      Application  = "LinuxWebApp"
+      Distribution = "Primary"
+    }
+  },
+
+  windows-cf = {
+    distribution_name     = "windows-app-distribution"
+    alb_origin            = "windows-alb"    # References the ALB module key
+    waf_key               = "cloudfront-waf" # References the WAF module key
+    price_class           = "PriceClass_100"
+    ping_auth_cookie_name = "PingAuthCookie"
+    ping_redirect_url     = "https://auth.dev.example.com/login"
+
+    # Supported CloudFront module parameters
+    allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods  = ["GET", "HEAD"]
+
+    tags = {
+      Application  = "WindowsWebApp"
+      Distribution = "Primary"
+    }
+  }
+}
+
+# WAF Configuration Specifications - Production-Grade Security
+waf_spec = {
+  cloudfront-waf = {
+    scope = "CLOUDFRONT" # For CloudFront distributions
+    default_action = "allow"  # Allow by default, block with specific rules
+
+    # Comprehensive AWS Managed Rules for maximum protection
+    enable_all_aws_managed_rules = false
+    enabled_aws_managed_rules = [
+      "common_rule_set",  # Core protection (OWASP Top 10)
+      "known_bad_inputs", # Malicious input protection
+      "sqli_rule_set",    # SQL injection protection
+      "ip_reputation",    # Bad IP blocking
+      "linux_rule_set",   # Linux-specific attacks
+      "bot_control",      # Bot protection
+      "anonymous_ip",     # Anonymous IP blocking
+      "wordpress_rule_set", # WordPress protection
+      "php_rule_set"      # PHP application protection
+    ]
+
+    # Production-grade custom rules with layered security
+    custom_rules = [
+      {
+        name                       = "AggressiveRateLimit"
+        priority                   = 11
+        action                     = "block"
+        type                       = "rate_based"
+        limit                      = 300 # 300 requests per 5 minutes
+        aggregate_key_type         = "IP"
+        cloudwatch_metrics_enabled = true
+        metric_name                = "AggressiveRateLimit"
+        sampled_requests_enabled   = true
+      },
+      {
+        name                       = "GeoBlockHighRisk"
+        priority                   = 12
+        action                     = "block"
+        type                       = "geo_match"
+        country_codes              = ["CN", "RU", "KP", "IR", "SY", "AF", "IQ"] # Expanded high-risk countries
+        cloudwatch_metrics_enabled = true
+        metric_name                = "GeoBlockHighRisk"
+        sampled_requests_enabled   = true
+      },
+      {
+        name                       = "BlockMaliciousIPs"
+        priority                   = 13
+        action                     = "block"
+        type                       = "ip_set"
+        ip_set_arn                 = "blocked_malicious_ips"
+        cloudwatch_metrics_enabled = true
+        metric_name                = "BlockMaliciousIPs"
+        sampled_requests_enabled   = true
+      }
+    ]
+
+    # Enhanced IP sets for comprehensive security
+    ip_sets = {
+      trusted_office_ips = {
+        ip_address_version = "IPV4"
+        addresses = [
+          "203.0.113.0/24",  # Corporate office (update with your real IPs)
+          "198.51.100.0/24", # Branch office (update with your real IPs)
+          "49.207.205.136/32"
+        ]
+      },
+      blocked_malicious_ips = {
+        ip_address_version = "IPV4"
+        addresses = [
+          "192.0.2.0/24" # Known malicious range
+        ]
+      }
+    }
+
+    # Production logging configuration
+    enable_logging     = true
+    log_retention_days = 180 # 6 months retention for compliance
+    log_destination_configs = ["arn:aws:logs:us-east-1:221106935066:log-group:aws-waf-logs-dev"]
+
+    # Privacy-compliant redacted fields
+    redacted_fields = [
+      {
+        single_header = {
+          name = "authorization"
+        }
+      },
+      {
+        single_header = {
+          name = "cookie"
+        }
+      }
+    ]
+
+    tags = {
+      Purpose     = "ProductionCloudFrontProtection"
+      Environment = "Development"
+      Security    = "Maximum"
     }
   }
 }

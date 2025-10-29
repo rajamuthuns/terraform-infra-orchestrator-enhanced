@@ -8,30 +8,7 @@ variable "project_name" {
   default     = "terraform-infra-orchestrator"
 }
 
-variable "gitlab_host" {
-  description = "GitLab host for the private base modules"
-  type        = string
-  default     = "gitlab.aws.dev"
-}
 
-variable "gitlab_org" {
-  description = "GitLab organization name for the private base modules"
-  type        = string
-}
-
-variable "base_modules" {
-  description = "Map of base modules with their repositories and versions"
-  type = map(object({
-    repository = string
-    version    = string
-  }))
-}
-
-variable "primary_module" {
-  description = "Primary module to use for this deployment"
-  type        = string
-  default     = "ec2"
-}
 
 # AWS configuration
 variable "aws_region" {
@@ -50,12 +27,7 @@ variable "environment" {
   type        = string
 }
 
-variable "gitlab_token" {
-  description = "GitLab token for module access"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
+
 
 # Common tags
 variable "common_tags" {
@@ -68,7 +40,7 @@ variable "common_tags" {
   }
 }
 
-# Module specifications
+# Module specifications - All configurations come from tfvars
 variable "ec2_spec" {
   description = "EC2 instance specifications"
   type        = any
@@ -80,3 +52,16 @@ variable "alb_spec" {
   type        = any
   default     = {}
 }
+
+variable "cloudfront_spec" {
+  description = "CloudFront distribution specifications"
+  type        = any
+  default     = {}
+}
+
+variable "waf_spec" {
+  description = "WAF configuration specifications"
+  type        = any
+  default     = {}
+}
+

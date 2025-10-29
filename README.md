@@ -1,908 +1,295 @@
-# GitOps Terraform Infrastructure Orchestrator
+# Terraform Infrastructure Orchestrator
 
-A **production-ready Terraform orchestrator** with GitOps workflow that acts as a wrapper around base infrastructure modules, enabling teams to build complex, multi-environment infrastructure using reusable components with automated branch-based promotion.
+A **production-ready Terraform orchestrator** that bridges and interlinks multiple base modules to deploy secure, scalable web infrastructure across **multiple AWS accounts** and **environments** with **seamless configuration management**.
 
-## 🎯 What is This Repository?
+## 🎯 What is This Orchestrator?
 
-This repository is an **Infrastructure Orchestrator with GitOps Workflow** that:
+This orchestrator serves as a **configuration bridge** that:
+- **Downloads and integrates** base modules from Terraform Registry and GitHub
+- **Manages inter-module dependencies** automatically across environments
+- **Provides seamless multi-account deployments** with consistent patterns
+- **Handles module versioning** and compatibility across workspaces
+- **Simplifies complex configurations** through unified tfvars files
+- **Enforces security best practices** with CloudFront WAF and managed prefix lists
 
-- 🧩 **Wraps base modules** - Downloads and orchestrates multiple Terraform base modules
-- 🏗️ **Simplifies infrastructure** - Provides high-level abstractions for complex deployments  
-- 🌍 **Multi-environment ready** - Supports dev, staging, and production with workspace isolation
-- 🔄 **GitOps branch promotion** - Automated dev → staging → production workflow
-- 📦 **Batch deployments** - Deploy multiple resources in one call using `for_each`
-- 🎛️ **Configuration-driven** - Define entire infrastructure through environment-specific tfvars files
-- 🛡️ **Built-in approvals** - Team reviews for staging/production, terraform apply approval for production
+## 🏗️ Orchestrator Architecture
 
-## 🏗️ Architecture Overview
-
+**Module Integration Flow:**
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                 Terraform Orchestrator                      │
-│                    (This Repository)                        │
-├─────────────────────────────────────────────────────────────┤
-│  Root Directory:                                            │
-│  ├── main.tf              ← Orchestrates base modules      │
-│  ├── variables.tf         ← Variable definitions           │
-│  ├── outputs.tf           ← Output definitions             │
-│  └── tfvars/              ← Environment configurations     │
-│      ├── dev-terraform.tfvars    ← Dev configs             │
-│      ├── stg-terraform.tfvars    ← Staging configs         │
-│      └── prod-terraform.tfvars   ← Production configs      │
-└─────────────────────┬───────────────────────────────────────┘
-                      │ Downloads & Uses
-┌─────────────────────▼───────────────────────────────────────┐
-│                 Base Modules                                │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐ │
-│  │   EC2 Module    │  │   ALB Module    │  │  RDS Module  │ │
-│  │ (External Repo) │  │ (External Repo) │  │(External Repo│ │
-│  └─────────────────┘  └─────────────────┘  └──────────────┘ │
-└─────────────────────────────────────────────────────────────┘
+tfvars/*.tfvars → main.tf (Orchestrator) → Base Modules → AWS Resources
+       ↑                    ↑                    ↑              ↑
+Configuration        Module Bridge        Registry/GitHub    Infrastructure
+   Files            & Dependency         Module Sources      Deployment
+                     Management
 ```
 
-## 📁 Repository Structure
+**Base Modules Integrated:**
+- **ALB Module**: `git::https://github.com/Norfolk-Southern/ns-itcp-tf-mod-alb.git` - Load balancer with health checks
+- **EC2 Module**: `git::https://github.com/rajamuthuns/ec2-base-module.git` - Instances with auto-configuration
+- **WAF Module**: `git::https://github.com/rajamuthuns/tf-waf-base-module.git` - Web Application Firewall with comprehensive rules
+- **CloudFront Module**: `git::https://github.com/rajamuthuns/tf-cf-base-module.git` - CDN with WAF protection
 
-```
-terraform-infra-orchestrator/
-├── README.md                          # This guide
-├── main.tf                            # Main Terraform configuration (environment-agnostic)
-├── variables.tf                       # Variable definitions
-├── outputs.tf                         # Output definitions
-├── backend.tf                         # Backend configuration
-├── userdata/                          # Server initialization scripts
-│   ├── userdata-linux.sh              # Linux server initialization script
-│   ├── userdata-windows.ps1           # Windows server initialization script
-│   └── README.md                      # Userdata documentation
-├── tfvars/                            # Environment-specific configurations
-│   ├── dev-terraform.tfvars           # Development environment values
-│   ├── stg-terraform.tfvars           # Staging environment values
-│   └── prod-terraform.tfvars          # Production environment values
-├── config/                            # GitOps configuration
-│   ├── aws-accounts.json              # AWS account mappings
-│   └── gitops-environments.json       # Environment-specific settings
-├── shared/                            # Common backend configuration
-│   ├── backend-common.hcl             # Common backend config for all environments
-│   └── README.md                      # Backend documentation
-├── scripts/                           # GitOps setup scripts
-├── docs/                              # Documentation
-├── .github/workflows/                 # GitOps CI/CD pipelines
-├── Makefile                           # Simple deployment commands
-├── deploy.sh                          # Local deployment script
-└── .gitignore                         # Git ignore rules
+## 🔗 Module Interlinking & Configuration Bridge
+
+### Automatic Module Linking
+```hcl
+# CloudFront automatically links to ALB and WAF
+cloudfront_spec = {
+  linux-cf = {
+    alb_origin = "linux-alb"        # → Links to module.alb["linux-alb"]
+    waf_key    = "cloudfront-waf"   # → Links to module.waf["cloudfront-waf"]
+  }
+}
+
+# EC2 automatically integrates with ALB target groups
+ec2_spec = {
+  "linux-webserver" = {
+    enable_alb_integration = true
+    alb_name = "linux-alb"          # → Links to module.alb["linux-alb"].target_group_arn
+  }
+}
 ```
 
-## 🌍 GitOps Branch Structure and Workflow
-
-### **Branch-Environment Mapping**
-Each branch corresponds to a specific environment and uses the appropriate tfvars file:
-
+### Configuration Simplification
+**Before (Complex Module Configuration):**
+```hcl
+# Multiple module calls with complex dependencies
+module "alb" { ... }
+module "ec2" { 
+  target_group_arns = [module.alb.target_group_arn]
+}
+module "cloudfront" {
+  origin_domain_name = module.alb.dns_name
+  web_acl_id = module.waf.web_acl_arn
+}
 ```
-dev branch        → Development environment   → tfvars/dev-terraform.tfvars
-staging branch    → Staging environment      → tfvars/stg-terraform.tfvars  
-production branch → Production environment   → tfvars/prod-terraform.tfvars
-```
 
-### **GitOps Promotion Workflow**
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    GitOps Workflow                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  1. Developer commits all configs to dev branch            │
-│     ├── main.tf (infrastructure code)                      │
-│     ├── tfvars/dev-terraform.tfvars (dev configs)          │
-│     ├── tfvars/stg-terraform.tfvars (staging configs)      │
-│     └── tfvars/prod-terraform.tfvars (production configs)  │
-│                                                             │
-│  2. Dev deployment uses tfvars/dev-terraform.tfvars        │
-│     └── Automatic deployment, no approvals                 │
-│                                                             │
-│  3. Auto-promotion to staging branch                       │
-│     ├── Promotes all files to staging branch               │
-│     ├── Staging deployment uses tfvars/stg-terraform.tfvars│
-│     └── Requires team approval                             │
-│                                                             │
-│  4. Auto-promotion to production branch                    │
-│     ├── Promotes all files to production branch            │
-│     ├── Production uses tfvars/prod-terraform.tfvars       │
-│     ├── Requires team approval                             │
-│     └── Additional terraform apply approval                │
-│                                                             │
-│  5. Infrastructure deployed across all environments! 🎉    │
-└─────────────────────────────────────────────────────────────┘
+**After (Orchestrator Simplification):**
+```hcl
+# Single tfvars configuration - orchestrator handles linking
+alb_spec = { linux-alb = { ... } }
+ec2_spec = { "webserver" = { alb_name = "linux-alb" } }
+cloudfront_spec = { "web-cf" = { alb_origin = "linux-alb" } }
 ```
 
 ## 🚀 Quick Start
 
-### 1. Clone and Setup
+### Prerequisites
+- AWS CLI configured with appropriate permissions
+- Terraform >= 1.0 installed
+- Access to target AWS accounts
+- **Security Group Quota Increase** (see [detailed guide](docs/SECURITY_GROUP_QUOTA_INCREASE.md))
+
+### Deploy Infrastructure
 ```bash
-git clone <repository-url>
-cd terraform-infra-orchestrator
-
-# Configure your shared services account ID
-nano config/aws-accounts.json
-
-# Setup backend resources in shared services account
-./scripts/setup-backend-per-account.sh
-```
-
-### 2. Configure Your Infrastructure
-```bash
-# Create environment-specific configurations
-nano tfvars/dev-terraform.tfvars      # Development settings
-nano tfvars/stg-terraform.tfvars      # Staging settings  
-nano tfvars/prod-terraform.tfvars     # Production settings
-```
-
-### 3. Deploy with GitOps
-```bash
-# Commit all configurations to dev branch
-git add .
-git commit -m "feat: add new infrastructure with all environment configs"
-git push origin dev
-
-# GitOps workflow automatically:
-# 1. Deploys to dev using tfvars/dev-terraform.tfvars
-# 2. Creates PR to staging (uses tfvars/stg-terraform.tfvars)
-# 3. Creates PR to production (uses tfvars/prod-terraform.tfvars)
-```
-
-## 🧩 How Base Module Integration Works
-
-### **Module Download and Usage**
-The orchestrator automatically downloads and uses base modules:
-
-```hcl
-# In main.tf
-module "ec2_instance" {
-  source = "git::https://github.com/your-org/ec2-base-module.git?ref=v1.0.0"
-  
-  for_each = var.ec2_spec              # Deploy multiple instances
-  
-  # Pass configuration from environment-specific tfvars
-  name_prefix   = each.key
-  instance_type = each.value.instance_type
-  vpc_name      = each.value.vpc_name
-  # ... other parameters
-}
-```
-
-### **Configuration-Driven Deployment**
-Define your entire infrastructure in environment-specific tfvars files:
-
-```hcl
-# tfvars/dev-terraform.tfvars - Development configuration
-ec2_spec = {
-  "web-server-1" = {
-    instance_type = "t3.micro"
-    vpc_name      = "dev-vpc"
-    ami_name      = "amzn2-ami-hvm-*"
-    # ... other settings
-  }
-}
-
-# tfvars/stg-terraform.tfvars - Staging configuration
-ec2_spec = {
-  "web-server-1" = {
-    instance_type = "t3.small"
-    vpc_name      = "staging-vpc"
-    ami_name      = "amzn2-ami-hvm-*"
-    # ... other settings
-  }
-}
-
-# tfvars/prod-terraform.tfvars - Production configuration
-ec2_spec = {
-  "web-server-1" = {
-    instance_type = "t3.medium"
-    vpc_name      = "prod-vpc"
-    ami_name      = "amzn2-ami-hvm-*"
-    # ... other settings
-  },
-  "web-server-2" = {
-    instance_type = "t3.medium"
-    vpc_name      = "prod-vpc"
-    ami_name      = "amzn2-ami-hvm-*"
-    # ... other settings
-  }
-}
-```
-
-## 🔗 Module Linking and Reference Variables
-
-### **Linking Modules Together**
-Connect modules using reference variables and outputs:
-
-```hcl
-# ALB Module
-module "alb" {
-  source = "git::https://github.com/your-org/alb-base-module.git?ref=v1.0.0"
-  for_each = var.alb_spec
-  
-  vpc_name = each.value.vpc_name
-  name     = "${each.value.name}-${var.environment}"
-}
-
-# EC2 Module - References ALB output
-module "ec2_instance" {
-  source = "git::https://github.com/your-org/ec2-base-module.git?ref=v1.0.0"
-  for_each = var.ec2_spec
-  
-  # Link to ALB target group
-  enable_alb_integration = try(each.value.enable_alb_integration, false)
-  alb_target_group_arns  = try(each.value.enable_alb_integration, false) ? 
-    [module.alb[each.value.alb_name].default_target_group_arn] : []
-}
-```
-
-### **Cross-Module References in tfvars**
-```hcl
-# tfvars/dev-terraform.tfvars
-# Define ALB first
-alb_spec = {
-  web-alb = {
-    name = "web-alb"
-    vpc_name = "dev-vpc"
-  }
-}
-
-# Reference ALB in EC2 configuration
-ec2_spec = {
-  "web-server" = {
-    enable_alb_integration = true
-    alb_name = "web-alb"              # References the ALB above
-    instance_type = "t3.micro"
-    vpc_name = "dev-vpc"
-  }
-}
-```
-
-## 📦 Adding New Base Modules
-
-### **Step 1: Add Module to main.tf**
-```hcl
-# Add new module block
-module "rds_instance" {
-  source = "git::https://github.com/your-org/rds-base-module.git?ref=v1.0.0"
-  for_each = var.rds_spec
-  
-  # Module-specific parameters
-  db_name           = each.value.db_name
-  engine            = each.value.engine
-  instance_class    = each.value.instance_class
-  vpc_name          = each.value.vpc_name
-  
-  # Link to other modules if needed
-  vpc_security_group_ids = [module.ec2_instance[each.value.ec2_ref].security_group_id]
-}
-```
-
-### **Step 2: Add Variable Definition**
-```hcl
-# In variables.tf
-variable "rds_spec" {
-  description = "RDS instance specifications"
-  type        = any
-  default     = {}
-}
-```
-
-### **Step 3: Add Output**
-```hcl
-# In outputs.tf
-output "rds_details" {
-  description = "RDS instance details"
-  value = {
-    for k, v in module.rds_instance : k => {
-      endpoint = v.db_endpoint
-      port     = v.db_port
-    }
-  }
-}
-```
-
-### **Step 4: Configure in Environment-Specific tfvars**
-```hcl
-# tfvars/dev-terraform.tfvars
-rds_spec = {
-  "app-database" = {
-    db_name        = "appdb"
-    engine         = "mysql"
-    instance_class = "db.t3.micro"
-    vpc_name       = "dev-vpc"
-    ec2_ref        = "web-server"    # Reference to EC2 for security group
-  }
-}
-
-# tfvars/stg-terraform.tfvars
-rds_spec = {
-  "app-database" = {
-    db_name        = "appdb"
-    engine         = "mysql"
-    instance_class = "db.t3.small"
-    vpc_name       = "staging-vpc"
-    ec2_ref        = "web-server"
-  }
-}
-
-# tfvars/prod-terraform.tfvars
-rds_spec = {
-  "app-database" = {
-    db_name        = "appdb"
-    engine         = "mysql"
-    instance_class = "db.r5.large"
-    vpc_name       = "prod-vpc"
-    ec2_ref        = "web-server"
-    multi_az       = true
-    backup_retention_period = 30
-  }
-}
-```
-
-## 🌍 Multi-Environment Management
-
-### **Common Backend with Workspace Isolation**
-All environments use a single S3 bucket and DynamoDB table with Terraform workspaces for isolation:
-
-```bash
-# Initialize with common backend (same for all environments)
+# Initialize with shared backend
 terraform init -backend-config=shared/backend-common.hcl
 
-# Development
+# Select environment workspace
 terraform workspace select dev || terraform workspace new dev
+
+# Deploy with environment-specific configuration
+terraform apply -var-file=tfvars/dev-terraform.tfvars
+```
+
+### Validate Deployment
+```bash
+# Test infrastructure and security
+./scripts/test_cloudfront_security.sh
+
+# Get orchestrated infrastructure outputs
+terraform output
+```
+
+## 📁 Orchestrator Structure
+
+```
+tf-enhanced/                        # Orchestrator Root
+├── main.tf                         # 🎯 Main orchestrator (module bridge)
+├── variables.tf                    # Variable definitions for all modules
+├── outputs.tf                      # Unified outputs from all modules
+├── backend.tf                      # Shared backend configuration
+├── tfvars/                         # 🔧 Environment-specific configurations
+│   ├── dev-terraform.tfvars        # Development environment config
+│   ├── stg-terraform.tfvars        # Staging environment config
+│   └── prod-terraform.tfvars       # Production environment config
+├── scripts/                        # 🛡️ Validation and testing scripts
+│   └── test_cloudfront_security.sh # Security testing script
+├── userdata/                       # Server initialization scripts
+├── shared/                         # Shared backend configuration
+└── docs/                           # Detailed documentation
+    └── ARCHITECTURE.md             # Detailed technical architecture
+```
+
+## 🌍 Multi-Environment & Multi-Account Orchestration
+
+### Environment Configuration Matrix
+| Environment | Account | Modules Used | Instance Types | Storage | Monitoring |
+|-------------|---------|-------------|---------------|---------|------------|
+| **Development** | Dev Account | ALB+EC2+WAF+CF | t3.small/medium | 20-100GB | Basic |
+| **Staging** | Staging Account | ALB+EC2+WAF+CF | t3.medium/large | 30-300GB | Enhanced |
+| **Production** | Prod Account | ALB+EC2+WAF+CF | t3.large+ | 50-500GB+ | Full SOC |
+
+### Cross-Account Deployment Workflow
+```
+Dev Account    → terraform workspace select dev    → tfvars/dev-terraform.tfvars
+Staging Account → terraform workspace select staging → tfvars/stg-terraform.tfvars  
+Prod Account   → terraform workspace select production → tfvars/prod-terraform.tfvars
+```
+
+## 🔧 Configuration Management
+
+### Adding New Infrastructure Components
+```hcl
+# tfvars/dev-terraform.tfvars - Single configuration file
+ec2_spec = {
+  "new-webserver" = {
+    enable_alb_integration = true      # Orchestrator handles ALB linking
+    alb_name               = "linux-alb"
+    instance_type          = "t3.small"
+    vpc_name               = "dev-mig-target-vpc"
+    ami_name               = "amzn2-ami-hvm-*-x86_64-gp2"
+    os_type                = "linux"
+    subnet_name            = "dev-mig-private-subnet-1"
+    
+    ingress_rules = [
+      {
+        from_port   = 22
+        to_port     = 22
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "SSH access from private networks"
+      },
+      {
+        from_port   = 80
+        to_port     = 80
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/8"]
+        description = "HTTP access from ALB"
+      }
+    ]
+  }
+}
+```
+
+## 🚀 Orchestrator Commands
+
+### Multi-Environment Deployment
+```bash
+# Development Environment
+terraform workspace select dev
 terraform apply -var-file=tfvars/dev-terraform.tfvars
 
-# Staging  
-terraform workspace select staging || terraform workspace new staging
+# Staging Environment  
+terraform workspace select staging
 terraform apply -var-file=tfvars/stg-terraform.tfvars
 
-# Production
-terraform workspace select production || terraform workspace new production
+# Production Environment
+terraform workspace select production
 terraform apply -var-file=tfvars/prod-terraform.tfvars
 ```
 
-### **Backend Architecture**
-```
-Shared Services Account (Centralized Backend)
-├── S3 Bucket: terraform-state-central-multi-env
-│   ├── environments/
-│   │   ├── dev/terraform.tfstate
-│   │   ├── staging/terraform.tfstate
-│   │   └── production/terraform.tfstate
-│
-└── DynamoDB Table: terraform-state-locks-common
+### Orchestrator Validation
+```bash
+# Check orchestrated infrastructure
+terraform show
 
-Environment Accounts (Cross-Account Access)
-├── Dev Account (221106935066) → Accesses shared backend
-├── Staging Account (137617557860) → Accesses shared backend  
-└── Production Account → Accesses shared backend
+# View all module outputs
+terraform output
+
+# Validate module interlinking
+terraform output architecture_flow
+
+# Test security and functionality
+./scripts/test_cloudfront_security.sh
 ```
 
-### **Environment-Specific Naming**
-Resources automatically get environment suffixes:
+## 🔗 Module Integration Benefits
 
+### Before Orchestrator (Manual Module Management)
+- ❌ Complex module dependencies across environments
+- ❌ Repetitive configuration for each account/environment
+- ❌ Manual output/input linking between modules
+- ❌ Inconsistent naming and tagging across deployments
+- ❌ Difficult environment and account promotion
+- ❌ Module version conflicts between environments
+
+### After Orchestrator (Automated Integration)
+- ✅ **Simplified Configuration**: Single tfvars file per environment
+- ✅ **Automatic Linking**: Modules reference each other automatically
+- ✅ **Consistent Patterns**: Standardized naming and tagging across accounts
+- ✅ **Environment Parity**: Same configuration structure across all environments
+- ✅ **Easy Scaling**: Add resources with minimal configuration
+- ✅ **Cross-Account Support**: Seamless deployment across AWS accounts
+- ✅ **Version Management**: Consistent module versions across environments
+
+## 🛡️ Security Architecture
+
+### CloudFront Security Integration
 ```hcl
-# In main.tf
-name = "${each.value.name}-${var.environment}"
-
-# Results in:
-# Dev: web-server-dev, database-dev
-# Staging: web-server-staging, database-staging  
-# Prod: web-server-prod, database-prod
-```
-
-## 🔄 Batch Deployments with for_each
-
-### **Deploy Multiple Resources in One Call**
-```hcl
-# tfvars/dev-terraform.tfvars - Deploy 2 web servers for development
-ec2_spec = {
-  "web-server-1" = { instance_type = "t3.micro", az = "us-east-1a" },
-  "web-server-2" = { instance_type = "t3.micro", az = "us-east-1b" }
-}
-
-# tfvars/stg-terraform.tfvars - Deploy 3 web servers for staging
-ec2_spec = {
-  "web-server-1" = { instance_type = "t3.small", az = "us-east-1a" },
-  "web-server-2" = { instance_type = "t3.small", az = "us-east-1b" },
-  "web-server-3" = { instance_type = "t3.small", az = "us-east-1c" }
-}
-
-# tfvars/prod-terraform.tfvars - Deploy 5 web servers for production
-ec2_spec = {
-  "web-server-1" = { instance_type = "t3.medium", az = "us-east-1a" },
-  "web-server-2" = { instance_type = "t3.medium", az = "us-east-1b" },
-  "web-server-3" = { instance_type = "t3.large",  az = "us-east-1c" },
-  "app-server-1" = { instance_type = "t3.xlarge", az = "us-east-1a" },
-  "app-server-2" = { instance_type = "t3.xlarge", az = "us-east-1b" }
-}
-```
-
-## 🎛️ Advanced Configuration Patterns
-
-### **Environment-Specific Sizing**
-```hcl
-# tfvars/dev-terraform.tfvars - Cost-optimized for development
-ec2_spec = {
-  "web-server" = {
-    instance_type = "t3.micro"
-    root_volume_size = 20
-    backup_retention = 7
+# Orchestrator automatically configures security
+waf_spec = {
+  cloudfront-waf = {
+    scope = "CLOUDFRONT"
+    enabled_aws_managed_rules = [
+      "common_rule_set", "sqli_rule_set", "bot_control"
+    ]
   }
 }
 
-# tfvars/stg-terraform.tfvars - Production-like for testing
-ec2_spec = {
-  "web-server" = {
-    instance_type = "t3.small"
-    root_volume_size = 50
-    backup_retention = 14
-  }
-}
-
-# tfvars/prod-terraform.tfvars - Production-grade resources
-ec2_spec = {
-  "web-server" = {
-    instance_type = "t3.large"
-    root_volume_size = 100
-    backup_retention = 30
-  }
-}
-```
-
-### **Module Chaining**
-```hcl
-# Chain modules together in all environment tfvars files
-vpc_spec = {
-  main = { cidr = "10.0.0.0/16" }  # Different CIDRs per environment
-}
-
+# ALB Security Groups use AWS managed CloudFront prefix lists
 alb_spec = {
-  web-alb = { 
-    vpc_name = "main-vpc"                    # References VPC
-  }
-}
-
-ec2_spec = {
-  web-server = {
-    vpc_name = "main-vpc"                    # References same VPC
-    alb_name = "web-alb"                     # References ALB
-    enable_alb_integration = true
+  linux-alb = {
+    http_ingress_prefix_list_ids = ["pl-3b927c52"]  # AWS managed
   }
 }
 ```
 
-## 📝 Development Workflow
-
-### **Step 1: Create All Environment Configurations**
-```bash
-# 1. Switch to dev branch
-git checkout dev
-
-# 2. Infrastructure code is already in root main.tf (environment-agnostic)
-# 3. Create environment-specific configurations in tfvars/
-
-# Create dev configuration
-cat > tfvars/dev-terraform.tfvars << EOF
-project_name = "myapp"
-environment = "dev"
-account_id = "123456789012"
-
-# Dev-specific VPC and networking
-alb_spec = {
-  web-alb = {
-    vpc_name = "dev-vpc"
-    http_enabled = true
-    https_enabled = false
-    name = "web-alb"
-  }
-}
-
-# Small, cost-effective resources
-ec2_spec = {
-  "web-server" = {
-    enable_alb_integration = true
-    alb_name = "web-alb"
-    instance_type = "t3.micro"
-    vpc_name = "dev-vpc"
-    subnet_name = "dev-public-subnet-1"
-    ami_name = "amzn2-ami-hvm-*-x86_64-gp2"
-    os_type = "linux"
-  }
-}
-EOF
-
-# 4. Create staging configuration
-cat > tfvars/stg-terraform.tfvars << EOF
-project_name = "myapp"
-environment = "staging"
-account_id = "123456789013"
-
-# Staging-specific VPC and networking
-alb_spec = {
-  web-alb = {
-    vpc_name = "staging-vpc"
-    http_enabled = true
-    https_enabled = false
-    name = "web-alb"
-  }
-}
-
-# Production-like resources
-ec2_spec = {
-  "web-server" = {
-    enable_alb_integration = true
-    alb_name = "web-alb"
-    instance_type = "t3.small"
-    vpc_name = "staging-vpc"
-    subnet_name = "staging-public-subnet-1"
-    ami_name = "amzn2-ami-hvm-*-x86_64-gp2"
-    os_type = "linux"
-  }
-}
-EOF
-
-# 5. Create production configuration
-cat > tfvars/prod-terraform.tfvars << EOF
-project_name = "myapp"
-environment = "prod"
-account_id = "123456789014"
-
-# Production-specific VPC and networking
-alb_spec = {
-  web-alb = {
-    vpc_name = "prod-vpc"
-    http_enabled = false
-    https_enabled = true
-    name = "web-alb"
-  }
-}
-
-# Production-grade resources
-ec2_spec = {
-  "web-server-1" = {
-    enable_alb_integration = true
-    alb_name = "web-alb"
-    instance_type = "t3.medium"
-    vpc_name = "prod-vpc"
-    subnet_name = "prod-public-subnet-1"
-    ami_name = "amzn2-ami-hvm-*-x86_64-gp2"
-    os_type = "linux"
-  },
-  "web-server-2" = {
-    enable_alb_integration = true
-    alb_name = "web-alb"
-    instance_type = "t3.medium"
-    vpc_name = "prod-vpc"
-    subnet_name = "prod-public-subnet-2"
-    ami_name = "amzn2-ami-hvm-*-x86_64-gp2"
-    os_type = "linux"
-  }
-}
-EOF
-
-# 6. Commit all configurations to dev branch
-git add .
-git commit -m "feat: add web server infrastructure with all environment configs"
-git push origin dev
-```
-
-### **Step 2: Updating Configurations**
-```bash
-# To update any environment configuration
-git checkout dev
-
-# Update the specific environment tfvars file
-nano tfvars/stg-terraform.tfvars   # Update staging config
-nano tfvars/prod-terraform.tfvars  # Update production config
-
-# Commit changes
-git add .
-git commit -m "config: update staging and production instance types"
-git push origin dev
-
-# GitOps workflow will promote the updated configs automatically
-```
-
-## 🚀 Deployment Workflows
-
-### **GitOps Development**
-```bash
-# Complete development cycle
-
-# Create all environment configs in dev branch
-nano tfvars/dev-terraform.tfvars   # Development settings
-nano tfvars/stg-terraform.tfvars   # Staging settings
-nano tfvars/prod-terraform.tfvars  # Production settings
-
-# Commit to dev branch
-git add .
-git commit -m "feat: add new infrastructure"
-git push origin dev
-
-# GitOps handles the rest automatically!
-```
-
-### **Manual Deployment**
-```bash
-# Using deployment script
-./deploy.sh dev apply              # Deploy to development
-./deploy.sh staging apply          # Deploy to staging
-./deploy.sh production apply       # Deploy to production
-
-# Using Makefile
-make dev      # Deploy to development
-make staging  # Deploy to staging
-make prod     # Deploy to production
-```
-
-## 🛠️ Customization and Extension
-
-### **Adding Custom User Data**
-```bash
-# userdata/userdata-linux.sh - Customize server initialization
-#!/bin/bash
-ENVIRONMENT="${environment}"
-HOSTNAME="${hostname}"
-
-# Install application-specific software
-yum install -y docker
-systemctl start docker
-
-# Deploy your application
-docker run -d -p 80:80 myapp:latest
-```
-
-### **Custom Module Integration**
-```hcl
-# Add your own modules alongside base modules
-module "custom_monitoring" {
-  source = "./modules/monitoring"
-  
-  # Reference other modules
-  instance_ids = [for k, v in module.ec2_instance : v.instance_id]
-  alb_arns     = [for k, v in module.alb : v.alb_arn]
-}
-```
-
-## 📋 Best Practices
-
-### **Configuration Management**
-- ✅ **Keep main.tf environment-agnostic** - Same logic across environments
-- ✅ **Use environment-specific tfvars** - Different values per environment
-- ✅ **Leverage for_each for scaling** - Deploy multiple resources efficiently
-- ✅ **Use reference variables** - Link modules together cleanly
-
-### **Module Organization**
-- ✅ **One concern per module** - EC2, ALB, RDS as separate modules
-- ✅ **Consistent naming** - Use environment suffixes everywhere
-- ✅ **Output important values** - Make module outputs available for linking
-- ✅ **Version your modules** - Pin to specific versions for stability
-
-### **Environment Strategy**
-- ✅ **Start with dev** - Test configurations in development first
-- ✅ **Promote through environments** - Dev → Staging → Production
-- ✅ **Use workspaces** - Isolate state between environments
-- ✅ **Automate with GitOps** - Use GitHub Actions for deployments
-
-## 🔄 Pipeline and Deployment Guide
-
-### **Pipeline Triggers and Workflow**
-
-#### **Automatic Triggers:**
-- **Dev Branch Push**: Automatically runs setup → plan → apply
-- **Staging/Production Branch Push**: Automatically runs setup → plan → apply
-- **Pull Requests to Staging/Production**: Runs plan-only for review
-
-#### **Manual Triggers:**
-You can manually trigger the pipeline from any branch:
-1. Go to **GitHub Actions** → **"Terraform Infrastructure Deploy"** → **"Run workflow"**
-2. Select options:
-   - **Branch**: Choose your branch (dev, staging, production)
-   - **Environment**: Choose target environment (dev, staging, production)
-   - **Action**: Choose pipeline action:
-     - `setup-only`: Just create S3 buckets and DynamoDB tables
-     - `plan-only`: Plan without applying changes
-     - `plan-and-apply`: Full deployment pipeline
-     - `destroy`: Destroy infrastructure
-   - **Skip setup**: Check if backends already exist
-
-### **Environment Protection and Approvals**
-
-#### **Current Configuration:**
-- **Dev Environment**: ✅ No approval required, auto-deploys
-- **Staging Environment**: ⚠️ **Requires GitHub Environment Protection Setup**
-- **Production Environment**: ⚠️ **Requires GitHub Environment Protection Setup**
-
-#### **Setting Up Environment Protection and Approvers:**
-
-1. **Go to Repository Settings**:
-   ```
-   GitHub Repository → Settings → Environments
-   ```
-
-2. **Create Environment Protection Rules**:
-
-   **For Staging Environment:**
-   ```
-   Environment name: staging
-   ✅ Required reviewers: Add your team members
-   ✅ Wait timer: 0 minutes (or set delay)
-   ✅ Deployment branches: Only staging branch
-   ```
-
-   **For Production Environment:**
-   ```
-   Environment name: production
-   ✅ Required reviewers: Add senior team members/leads
-   ✅ Wait timer: 5 minutes (cooling period)
-   ✅ Deployment branches: Only production branch
-   ```
-
-   **For Production Apply Approval:**
-   ```
-   Environment name: production-apply-approval
-   ✅ Required reviewers: Add infrastructure team leads
-   ✅ Wait timer: 0 minutes
-   ✅ Deployment branches: Only production branch
-   ```
-
-3. **Add Reviewers**:
-   - Click **"Add required reviewers"**
-   - Add GitHub usernames or teams
-   - Minimum 1-2 reviewers recommended
-
-### **Creating PRs for Staging Environment**
-
-#### **Why No Automatic PR Creation:**
-Your current pipeline is configured for **direct branch deployment**, not PR-based workflow. Here are your options:
-
-#### **Option 1: Manual PR Creation (Current Setup)**
-```bash
-# After dev deployment succeeds, manually create PR
-git checkout staging
-git merge dev
-git push origin staging
-
-# Or create PR via GitHub UI
-# GitHub → Pull Requests → New → base: staging ← compare: dev
-```
-
-#### **Option 2: Enable GitOps Auto-Promotion**
-You have a `gitops-promotion.yml` workflow that can auto-create PRs. To enable it:
-
-1. **Check GitOps Configuration**:
-   ```bash
-   # Verify config/gitops-environments.json exists and is configured
-   cat config/gitops-environments.json
-   ```
-
-2. **Enable Auto-Promotion**:
-   The GitOps workflow should automatically create PRs from dev → staging → production when dev deployment succeeds.
-
-#### **Option 3: Switch to PR-Only Workflow**
-Modify the pipeline to only deploy via PRs:
-
-```yaml
-# In .github/workflows/terraform-deploy.yml
-on:
-  pull_request:
-    branches:
-      - dev        # Add this for dev PRs
-      - staging
-      - production
-  # Remove push triggers if you want PR-only workflow
-```
-
-### **Recommended Workflow for Your Team**
-
-#### **For Development:**
-```bash
-# 1. Work on feature branch
-git checkout -b feature/new-infrastructure
-# Make changes to main.tf and tfvars files
-git commit -m "feat: add new infrastructure"
-git push origin feature/new-infrastructure
-
-# 2. Create PR to dev branch
-# GitHub → Pull Requests → New → base: dev ← compare: feature/new-infrastructure
-
-# 3. After PR approval and merge, dev auto-deploys
-```
-
-#### **For Staging Deployment:**
-```bash
-# Option A: Manual PR (Current)
-git checkout staging
-git merge dev
-git push origin staging
-
-# Option B: GitHub UI PR
-# GitHub → Pull Requests → New → base: staging ← compare: dev
-# Add reviewers → Create PR → Approve → Merge
-# Pipeline auto-deploys to staging after merge
-```
-
-#### **For Production Deployment:**
-```bash
-# Create PR from staging to production
-git checkout production  
-git merge staging
-git push origin production
-
-# Or via GitHub UI with required approvals
-```
-
-### **Pipeline Status and Monitoring**
-
-#### **Check Pipeline Status:**
-```bash
-# View recent workflow runs
-GitHub → Actions → Select workflow → View runs
-
-# Check specific environment deployment
-GitHub → Actions → Filter by branch (dev/staging/production)
-```
-
-#### **Environment URLs:**
-After successful deployment, check the workflow summary for:
-- **ALB Endpoints**: Load balancer URLs
-- **EC2 Instance Details**: Instance IDs and IPs
-- **Terraform Outputs**: All resource details
-
-### **Troubleshooting Common Issues**
-
-#### **S3 Bucket Errors:**
-- ✅ **Fixed**: Pipeline now automatically creates S3 buckets
-- If still occurring: Run workflow with `setup-only` action first
-
-#### **Backend Configuration Issues:**
-- Check if `shared/backend-common.hcl` exists and is properly configured
-- Run setup stage to create common backend resources and workspaces
-
-#### **Permission Issues:**
-- Verify AWS credentials in repository secrets
-- Check IAM roles have proper permissions
-- Ensure `OrganizationAccountAccessRole` exists in target accounts
-
-#### **Module Download Failures:**
-- Verify `PRIVATE_REPO_TOKEN` has access to module repositories
-- Check module repository URLs in main.tf
+**Security Benefits:**
+- ✅ **AWS Managed Prefix Lists**: CloudFront IPs automatically updated
+- ✅ **Attack Protection**: OWASP Top 10, bot control, rate limiting
+- ✅ **Global Edge Security**: Protection at 400+ CloudFront locations
+- ✅ **Zero Direct Access**: ALB only accessible via CloudFront
 
 ## 📚 Documentation
 
-- **[GitOps Setup Guide](docs/GITOPS_SETUP.md)** - Detailed setup instructions for GitOps workflow
-- **[Environment-Specific Configurations](docs/ENVIRONMENT_SPECIFIC_CONFIGS.md)** - Managing different VPCs, configs per environment
-- **[Architecture Guide](docs/ARCHITECTURE.md)** - Technical architecture details
-- **[Deployment Guide](docs/DEPLOYMENT.md)** - Step-by-step deployment instructions  
-- **[GitHub Actions Setup](docs/GITHUB_ACTIONS_SETUP.md)** - GitHub Actions configuration guide
-- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+For detailed technical information, see:
+- **[Security Group Quota Increase Guide](docs/SECURITY_GROUP_QUOTA_INCREASE.md)** - ⚠️ **REQUIRED**: Step-by-step quota increase process
+- **[Architecture Guide](docs/architecture.md)** - Detailed technical architecture and component details
+- **[Module Linking Architecture](docs/module_linking_architecture.md)** - How modules interconnect and dependency management
+- **[GitHub Actions Setup](docs/github_actions_setup.md)** - CI/CD pipeline configuration and GitOps workflow
+- **[Infrastructure Setup](docs/infra_setup.md)** - Initial infrastructure setup and prerequisites
+- **[Shared Services Backend Setup](docs/shared_services_backend_setup.md)** - Backend configuration and state management
+- **[Troubleshooting Guide](docs/troubleshooting.md)** - Common issues, solutions, and diagnostic commands
+- **[GitFlow Diagram](docs/GitFlow.jpg)** - Visual representation of the GitOps workflow
 
-## 🆘 Getting Help
+## 🎯 Current Orchestrated Infrastructure
 
-### **Common Tasks**
-- **Adding new modules**: Follow the "Adding New Base Modules" section
-- **Linking modules**: Use reference variables and outputs
-- **Environment differences**: Modify environment-specific tfvars files
-- **Scaling resources**: Use for_each with multiple configurations
+**✅ Successfully Orchestrated:**
+- **4 Base Modules** integrated and interlinked across environments
+- **Multi-environment support** (dev/staging/prod) with workspace management
+- **Cross-account deployment** capability with consistent configuration
+- **Automatic dependency management** between modules
+- **Unified configuration** through environment-specific tfvars files
+- **Consistent resource naming** and tagging across all deployments
+- **Security integration** with CloudFront WAF and managed prefix lists
 
-### **Troubleshooting**
-- **Module not found**: Check source paths and module availability
-- **Reference errors**: Verify module outputs and variable names
-- **Environment issues**: Confirm workspace and tfvars file settings
-- **Deployment failures**: Check logs and module documentation
+**🔧 Orchestrator Features:**
+- **Module Version Management**: Consistent module versions across environments
+- **Configuration Validation**: Built-in validation for module compatibility
+- **Dependency Resolution**: Automatic handling of module interdependencies
+- **Environment Promotion**: Easy configuration promotion between environments
+- **Cross-Account Support**: Seamless deployment across multiple AWS accounts
+- **Workspace Management**: Terraform workspace integration for environment isolation
+- **Security Integration**: Built-in security best practices and validation
 
-## 🎯 Summary
+**🌐 Multi-Account Architecture:**
+- **Account Isolation**: Separate AWS accounts for dev/staging/production
+- **Consistent Configuration**: Same orchestrator patterns across all accounts
+- **Cross-Account Backend**: Shared Terraform state management
+- **Environment Parity**: Identical infrastructure patterns with environment-specific sizing
+- **Security Compliance**: Consistent security policies across all accounts
 
-This GitOps Terraform Infrastructure Orchestrator enables you to:
+---
 
-1. **🧩 Orchestrate multiple base modules** with minimal configuration
-2. **🔄 Deploy batch resources** using for_each patterns  
-3. **🔗 Link modules together** using reference variables
-4. **🌍 Manage multiple environments** with workspace isolation and GitOps promotion
-5. **📦 Add new modules easily** following established patterns
-6. **🎛️ Configure everything** through environment-specific tfvars files
-7. **🚀 Automate deployments** with GitOps branch-based promotion workflow
-
-**Start building your infrastructure today** - clone this repository, configure your environment-specific tfvars files, and commit to dev branch! 🚀
+**Ready to orchestrate your infrastructure?** This orchestrator simplifies complex multi-module deployments across multiple AWS accounts and environments into manageable, consistent configurations! 🚀

@@ -388,45 +388,20 @@ Get-Content C:\inetpub\logs\LogFiles\W3SVC1\*.log | Select-Object -Last 10
 
 ## 📞 Getting Help
 
-### Log Collection
+### Getting Help
 
-Before seeking help, collect these logs:
+**Information to Provide:**
+1. Environment (dev/staging/prod)
+2. Terraform version
+3. Complete error messages
+4. Recent changes made
 
-**Terraform Logs:**
+**Log Collection:**
 ```bash
-# Enable logging and save output
+# Enable Terraform debug logging
 export TF_LOG=DEBUG
 terraform apply 2>&1 | tee terraform-debug.log
 ```
-
-**Instance Logs:**
-```bash
-# Linux
-sudo tar -czf instance-logs.tar.gz /var/log/
-scp instance-logs.tar.gz local-machine:
-
-# Windows
-Compress-Archive -Path C:\UserDataLogs\* -DestinationPath instance-logs.zip
-```
-
-### Information to Provide
-
-When seeking help, include:
-1. **Environment**: dev/staging/prod
-2. **Terraform Version**: `terraform version`
-3. **AWS Region**: Where resources are deployed
-4. **Error Messages**: Complete error output
-5. **Configuration**: Relevant terraform.tfvars (sanitized)
-6. **Logs**: Terraform and instance logs
-7. **Timeline**: When the issue started
-8. **Changes**: Recent changes made
-
-### Support Channels
-
-1. **Documentation**: Check README files and docs/
-2. **Issues**: Create GitHub issue with logs and details
-3. **Community**: Stack Overflow with terraform and aws tags
-4. **AWS Support**: For AWS-specific issues
 
 ## 🛠️ Prevention Tips
 

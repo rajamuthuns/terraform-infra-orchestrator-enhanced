@@ -1,48 +1,66 @@
 # Terraform Infrastructure Orchestrator - Outputs
-# These outputs provide information about deployed resources across all environments
 
+# Essential Infrastructure Endpoints
+output "alb_endpoints" {
+  description = "ALB endpoints for accessing applications"
+  value = {
+    for k, v in module.alb : k => "http://${v.alb_dns_name}"
+  }
+}
+
+output "cloudfront_endpoints" {
+  description = "CloudFront distribution endpoints"
+  value = {
+    for k, v in module.cloudfront : k => "https://${v.distribution_domain_name}"
+  }
+}
+
+# Instance Information
 output "instance_details" {
-  description = "Details of created EC2 instances"
+  description = "EC2 instance details"
   value = {
     for k, v in module.ec2_instance : k => {
-      instance_id       = v.instance_id
-      private_ip        = v.private_ip
-      public_ip         = v.public_ip
-      availability_zone = v.availability_zone
-      subnet_id         = v.subnet_id
-      vpc_id            = v.vpc_id
+      instance_id = v.instance_id
+      private_ip  = v.private_ip
+      public_ip   = v.public_ip
     }
   }
 }
 
-output "ami_information" {
-  description = "AMI information for each instance"
+# Architecture Flow Summary
+output "architecture_flow" {
+  description = "Complete architecture flow: EC2 → ALB → CloudFront → WAF"
   value = {
-    for k, v in module.ec2_instance : k => v.ami_info
-  }
-}
-
-output "security_groups" {
-  description = "Security group information for each instance"
-  value = {
-    for k, v in module.ec2_instance : k => {
-      security_group_id = v.security_group_id
+    ec2_instances = {
+      for k, v in module.ec2_instance : k => {
+        instance_id = v.instance_id
+        alb_integration = try(var.ec2_spec[k].enable_alb_integration, false) ? var.ec2_spec[k].alb_name : "none"
+      }
+    }
+    alb_load_balancers = {
+      for k, v in module.alb : k => {
+        dns_name = v.alb_dns_name
+      }
+    }
+    cloudfront_distributions = {
+      for k, v in module.cloudfront : k => {
+        domain_name = v.distribution_domain_name
+        origin_alb = try(var.cloudfront_spec[k].alb_origin, "unknown")
+        waf_protected = try(var.cloudfront_spec[k].waf_key, null) != null
+      }
+    }
+    waf_web_acls = {
+      for k, v in module.waf : k => {
+        web_acl_name = v.web_acl_name
+        scope = try(var.waf_spec[k].scope, "REGIONAL")
+      }
     }
   }
 }
 
-output "ebs_volumes" {
-  description = "EBS volume information for each instance"
-  value = {
-    for k, v in module.ec2_instance : k => {
-      root_block_device  = v.root_block_device
-      additional_volumes = v.additional_ebs_volumes
-    }
-  }
-}
-
-output "workspace_info" {
-  description = "Current workspace information"
+# Environment Information
+output "deployment_info" {
+  description = "Current deployment information"
   value = {
     workspace   = terraform.workspace
     environment = var.environment
@@ -50,25 +68,14 @@ output "workspace_info" {
   }
 }
 
-# ALB outputs for all ALB instances
-output "alb_details" {
-  description = "Details of all ALB instances"
+# Security Configuration
+output "waf_details" {
+  description = "WAF web ACL details"
   value = {
-    for k, v in module.alb : k => {
-      alb_dns_name             = v.alb_dns_name
-      default_target_group_arn = v.default_target_group_arn
-      vpc_id                   = v.vpc_id
-      subnet_ids               = v.subnet_ids
-      auto_discovered_subnets  = v.auto_discovered_subnets
-      subnet_discovery_method  = v.subnet_discovery_method
+    for k, v in module.waf : k => {
+      web_acl_id   = v.web_acl_id
+      web_acl_name = v.web_acl_name
+      capacity     = v.web_acl_capacity
     }
-  }
-}
-
-# Environment-specific ALB endpoints
-output "alb_endpoints" {
-  description = "All ALB endpoints by name"
-  value = {
-    for k, v in module.alb : k => v.alb_dns_name
   }
 }
